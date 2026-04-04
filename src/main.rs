@@ -203,7 +203,7 @@ impl App {
         match self.typing_state {
             TypingState::Done => {
                 match key.code {
-                    KeyCode::Char('r') | KeyCode::Enter => self.restart(),
+                    KeyCode::Char('r') | KeyCode::Enter | KeyCode::Char(' ') => self.restart(),
                     _ => {}
                 }
             }
