@@ -873,15 +873,25 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         };
 
         lines.push(Line::from(Span::styled(label, style)));
-        lines.push(Line::from(""));
     }
 
+    // Description of the currently highlighted mode
+    lines.push(Line::from(""));
+    let desc = MODES[app.config_cursor].description();
+    for desc_line in desc.lines() {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", desc_line),
+            Style::default().fg(Color::White),
+        )));
+    }
+
+    lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  ↑/↓ to move   Enter to save   ^T back to train",
         Style::default().fg(Color::DarkGray),
     )));
 
-    let box_rect = centered_rect(60, (lines.len() as u16) + 2, area);
+    let box_rect = centered_rect(64, (lines.len() as u16) + 2, area);
     frame.render_widget(
         Paragraph::new(lines).block(
             Block::default()
