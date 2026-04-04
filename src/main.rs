@@ -675,11 +675,10 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let filled = (bar_width * progress_pct) as usize;
     let empty = bar_width as usize - filled;
     let bar_text = format!(
-        "[{}{}] {:.0}%  errors: {}",
+        "[{}{}] {:.0}%",
         "█".repeat(filled),
         "░".repeat(empty),
         progress_pct * 100.0,
-        app.errors
     );
 
     let bar_rect = Rect::new(box_rect.x, box_rect.y + box_rect.height + 1, box_rect.width, 1);
@@ -690,6 +689,31 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                 .style(Style::default().fg(Color::Yellow)),
             bar_rect,
         );
+    }
+
+    // Live stats row (only while typing)
+    if app.typing_state == TypingState::Typing {
+        let live_wpm = if let Some(start) = app.start_time {
+            let mins = start.elapsed().as_secs_f64() / 60.0;
+            if mins > 0.0 { (app.cursor as f64 / 5.0 / mins) as u32 } else { 0 }
+        } else { 0 };
+        let total_keys = app.cursor + app.errors;
+        let accuracy = if total_keys > 0 {
+            (app.cursor.saturating_sub(app.errors) as f64 / total_keys as f64 * 100.0) as u32
+        } else { 100 };
+        let stats_text = format!(
+            "WPM: {}   accuracy: {}%   errors: {}",
+            live_wpm, accuracy, app.errors
+        );
+        let stats_rect = Rect::new(box_rect.x, bar_rect.y + 1, box_rect.width, 1);
+        if stats_rect.bottom() <= area.bottom() {
+            frame.render_widget(
+                Paragraph::new(stats_text)
+                    .alignment(Alignment::Center)
+                    .style(Style::default().fg(Color::Cyan)),
+                stats_rect,
+            );
+        }
     }
 }
 
