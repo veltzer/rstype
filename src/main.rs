@@ -607,10 +607,10 @@ fn render(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> i
         let area = frame.area();
         frame.render_widget(Block::default().style(Style::default().bg(Color::Black)), area);
 
-        // Reserve top row for toolbar, bottom row for status bar
-        let toolbar_rect  = Rect::new(area.x, area.y, area.width, 1);
+        // Reserve top row for toolbar, bottom row for status bar, one blank line below toolbar
+        let toolbar_rect   = Rect::new(area.x, area.y, area.width, 1);
         let statusbar_rect = Rect::new(area.x, area.y + area.height.saturating_sub(1), area.width, 1);
-        let body_rect     = Rect::new(area.x, area.y + 1, area.width, area.height.saturating_sub(2));
+        let body_rect      = Rect::new(area.x, area.y + 2, area.width, area.height.saturating_sub(3));
 
         render_toolbar(frame, toolbar_rect, app);
         render_statusbar(frame, statusbar_rect, app);
