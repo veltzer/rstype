@@ -660,7 +660,7 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(title.as_str())
+                .title(title)
                 .title_alignment(Alignment::Center)
                 .style(Style::default().fg(Color::Cyan)),
         )
