@@ -139,19 +139,47 @@ impl App {
         *self = App::new(cfg);
     }
 
-    fn on_key(&mut self, key: KeyEvent) {
+    /// Returns true if the app should quit.
+    fn on_key(&mut self, key: KeyEvent) -> bool {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+        // Global Ctrl shortcuts — work from any screen
+        if ctrl {
+            match key.code {
+                KeyCode::Char('e') => return true,
+                KeyCode::Char('t') => {
+                    self.screen = Screen::Typing;
+                    return false;
+                }
+                KeyCode::Char('c') => {
+                    self.open_config();
+                    return false;
+                }
+                _ => {}
+            }
+        }
+
+        // Esc goes back to train screen (from config), or quits if already on train
+        if key.code == KeyCode::Esc {
+            match self.screen {
+                Screen::Config => {
+                    self.screen = Screen::Typing;
+                    return false;
+                }
+                Screen::Typing => return true,
+            }
+        }
+
         match self.screen {
             Screen::Config => self.on_key_config(key),
             Screen::Typing => self.on_key_typing(key),
         }
+        false
     }
 
     fn on_key_config(&mut self, key: KeyEvent) {
         const MODES: [TypingMode; 2] = [TypingMode::Forward, TypingMode::Stop];
         match key.code {
-            KeyCode::Esc => {
-                self.screen = Screen::Typing;
-            }
             KeyCode::Up => {
                 if self.config_cursor > 0 {
                     self.config_cursor -= 1;
@@ -176,15 +204,11 @@ impl App {
             TypingState::Done => {
                 match key.code {
                     KeyCode::Char('r') | KeyCode::Enter => self.restart(),
-                    KeyCode::Char('c') => self.open_config(),
                     _ => {}
                 }
             }
             TypingState::Waiting | TypingState::Typing => {
                 match key.code {
-                    KeyCode::Char('c') if self.typing_state == TypingState::Waiting => {
-                        self.open_config();
-                    }
                     KeyCode::Backspace => {
                         if self.cursor > 0 {
                             self.cursor -= 1;
@@ -273,15 +297,55 @@ fn render(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> i
         let area = frame.area();
         frame.render_widget(Block::default().style(Style::default().bg(Color::Black)), area);
 
+        // Reserve top row for toolbar
+        let toolbar_rect = Rect::new(area.x, area.y, area.width, 1);
+        let body_rect = Rect::new(area.x, area.y + 1, area.width, area.height.saturating_sub(1));
+
+        render_toolbar(frame, toolbar_rect, app);
+
         match app.screen {
-            Screen::Config => render_config(frame, area, app),
+            Screen::Config => render_config(frame, body_rect, app),
             Screen::Typing => match app.typing_state {
-                TypingState::Done => render_done(frame, area, app),
-                _ => render_typing(frame, area, app),
+                TypingState::Done => render_done(frame, body_rect, app),
+                _ => render_typing(frame, body_rect, app),
             },
         }
     })?;
     Ok(())
+}
+
+fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    let active_style = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let normal_style = Style::default().fg(Color::Black).bg(Color::White);
+    let key_style   = Style::default().fg(Color::Blue).bg(Color::White).add_modifier(Modifier::BOLD);
+    let active_key_style = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
+
+    let is_train  = app.screen == Screen::Typing;
+    let is_config = app.screen == Screen::Config;
+
+    let mut spans = vec![Span::styled(" ", Style::default().bg(Color::White))];
+
+    // (T)rain
+    let (k, r) = if is_train { (active_key_style, active_style) } else { (key_style, normal_style) };
+    spans.push(Span::styled("(", r));
+    spans.push(Span::styled("T", k));
+    spans.push(Span::styled(")rain ", r));
+
+    // (C)onfig
+    let (k, r) = if is_config { (active_key_style, active_style) } else { (key_style, normal_style) };
+    spans.push(Span::styled("(", r));
+    spans.push(Span::styled("C", k));
+    spans.push(Span::styled(")onfig ", r));
+
+    // (E)xit — never "active", always same style
+    spans.push(Span::styled("(", normal_style));
+    spans.push(Span::styled("E", key_style));
+    spans.push(Span::styled(")xit ", normal_style));
+
+    // Fill the rest of the bar
+    spans.push(Span::styled(" ".repeat(area.width as usize), Style::default().bg(Color::White)));
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
@@ -453,7 +517,7 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     }
 
     lines.push(Line::from(Span::styled(
-        "  ↑/↓ to move   Enter to save   Esc to cancel",
+        "  ↑/↓ to move   Enter to save   T → back to train",
         Style::default().fg(Color::DarkGray),
     )));
 
@@ -487,10 +551,9 @@ fn main() -> io::Result<()> {
 
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
-                if key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                if app.on_key(key) {
                     break;
                 }
-                app.on_key(key);
                 // Clear flash after it's been rendered once
                 app.error_flash = false;
             }
