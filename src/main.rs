@@ -604,10 +604,14 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn render_statusbar(frame: &mut ratatui::Frame, area: Rect) {
+fn render_statusbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let style = Style::default().fg(Color::Black).bg(Color::White);
+    let mode_label = match app.config.mode {
+        TypingMode::Forward => "forward",
+        TypingMode::Stop => "stop",
+    };
     let text = format!(
-        " rstype by Mark Veltzer <mark.veltzer@gmail.com>{}",
+        " rstype by Mark Veltzer <mark.veltzer@gmail.com>  [mode: {mode_label}]{}",
         " ".repeat(area.width as usize)
     );
     frame.render_widget(Paragraph::new(text).style(style), area);
@@ -644,14 +648,9 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         spans.push(span);
     }
 
-    let mode_label = match app.config.mode {
-        TypingMode::Forward => "forward",
-        TypingMode::Stop => "stop",
-    };
-
     let title = match app.typing_state {
-        TypingState::Waiting => format!(" rstype [{mode_label}] — press any key to start, C for config "),
-        _ => format!(" rstype [{mode_label}] — typing… (Backspace to correct) "),
+        TypingState::Waiting => " press any key to start ",
+        _ => " typing… ",
     };
 
     let text_width = (app.target.len() as u16 + 4).min(area.width);
