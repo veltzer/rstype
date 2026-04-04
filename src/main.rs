@@ -462,13 +462,9 @@ fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             ),
         ]),
         Line::from(""),
-        Line::from(Span::styled(
-            "  Enter/R → restart   C → config   Ctrl-Q → quit",
-            Style::default().fg(Color::DarkGray),
-        )),
     ];
 
-    let result_rect = centered_rect(52, 10, area);
+    let result_rect = centered_rect(52, 8, area);
     frame.render_widget(
         Paragraph::new(lines).block(
             Block::default()
