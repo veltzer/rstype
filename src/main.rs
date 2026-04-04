@@ -638,9 +638,11 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     }
 
     // Right-align "rstype by Mark Veltzer" in the remaining space
+    // Left side width: "  " + "Train  " + "ConfiG  " + "History  " + "Exit  " = 2+8+8+9+6 = 33
+    let left_width: u16 = 34;
     let title = "rstype by Mark Veltzer  ";
     let title_len = title.len() as u16;
-    let pad = area.width.saturating_sub(title_len);
+    let pad = area.width.saturating_sub(left_width + title_len);
     spans.push(Span::styled(" ".repeat(pad as usize), normal_style));
     spans.push(Span::styled(title, Style::default().fg(Color::DarkGray).bg(Color::White)));
 
