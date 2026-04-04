@@ -701,8 +701,8 @@ fn render_calendar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 
     let mut lines: Vec<Line> = vec![Line::from(""), Line::from(header_spans), Line::from("")];
 
-    // Total slots rounded up to full weeks
-    let total_slots = ((first_dow + num_days) as usize + 6) / 7 * 7;
+    // Always render 6 weeks so the box size never changes between months
+    let total_slots = 6 * 7;
     let mut day_spans: Vec<Span> = Vec::new();
     let mut stat_spans: Vec<Span> = Vec::new();
 
@@ -742,8 +742,8 @@ fn render_calendar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     }
 
     let title = format!(" {} {}   ← prev   → next ", month_name(month), year);
-    let box_width = (CELL * 7 + 4) as u16;
-    let box_height = (lines.len() + 2) as u16;
+    let box_width  = (CELL * 7 + 4) as u16;
+    let box_height = (2 + 1 + 6 * 3 + 2) as u16; // header + blank + 6*(day+stat+blank) + borders
     let box_rect = centered_rect(box_width, box_height, area);
 
     frame.render_widget(
