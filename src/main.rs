@@ -11,7 +11,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Terminal;
 use serde::{Deserialize, Serialize};
 
@@ -622,25 +622,19 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 
     for (i, &ch) in app.target.iter().enumerate() {
         let span = if i < app.cursor {
-            // Already typed
             if app.typed[i] == ch {
                 Span::styled(ch.to_string(), Style::default().fg(Color::Green))
             } else {
-                // Forward mode wrong char
                 Span::styled(
                     ch.to_string(),
                     Style::default().fg(Color::Red).add_modifier(Modifier::UNDERLINED),
                 )
             }
         } else if i == app.cursor {
-            // Current cursor
             let bg = if app.error_flash { Color::Red } else { Color::White };
             Span::styled(
                 ch.to_string(),
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Black).bg(bg).add_modifier(Modifier::BOLD),
             )
         } else {
             Span::styled(ch.to_string(), Style::default().fg(Color::DarkGray))
@@ -648,30 +642,19 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         spans.push(span);
     }
 
-    let title = match app.typing_state {
-        TypingState::Waiting => " press any key to start ",
-        _ => " typing… ",
-    };
-
     let text_width = (app.target.len() as u16 + 4).min(area.width);
-    let box_rect = centered_rect(text_width, 5, area);
 
-    let paragraph = Paragraph::new(vec![Line::from(""), Line::from(spans)])
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .title_alignment(Alignment::Center)
-                .style(Style::default().fg(Color::Cyan)),
-        )
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: false });
+    // Center the text row vertically; place progress + stats just below it
+    let text_rect = centered_rect(text_width, 1, area);
 
-    frame.render_widget(paragraph, box_rect);
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).alignment(Alignment::Center),
+        text_rect,
+    );
 
     // Progress bar
     let progress_pct = app.cursor as f64 / app.target.len() as f64;
-    let bar_width = box_rect.width.saturating_sub(2) as f64;
+    let bar_width = text_rect.width as f64;
     let filled = (bar_width * progress_pct) as usize;
     let empty = bar_width as usize - filled;
     let bar_text = format!(
@@ -681,7 +664,7 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         progress_pct * 100.0,
     );
 
-    let bar_rect = Rect::new(box_rect.x, box_rect.y + box_rect.height + 1, box_rect.width, 1);
+    let bar_rect = Rect::new(text_rect.x, text_rect.y + 2, text_rect.width, 1);
     if bar_rect.bottom() <= area.bottom() {
         frame.render_widget(
             Paragraph::new(bar_text)
@@ -705,7 +688,7 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             "WPM: {}   accuracy: {}%   errors: {}",
             live_wpm, accuracy, app.errors
         );
-        let stats_rect = Rect::new(box_rect.x, bar_rect.y + 1, box_rect.width, 1);
+        let stats_rect = Rect::new(text_rect.x, bar_rect.y + 1, text_rect.width, 1);
         if stats_rect.bottom() <= area.bottom() {
             frame.render_widget(
                 Paragraph::new(stats_text)
