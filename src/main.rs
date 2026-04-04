@@ -1,5 +1,5 @@
-use std::fs;
-use std::io;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -16,7 +16,106 @@ use serde::{Deserialize, Serialize};
 
 const TARGET_TEXT: &str = "The quick brown fox jumps over the lazy dog";
 
-// ── Config ────────────────────────────────────────────────────────────────────
+// ── History ───────────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct Keystroke {
+    typed: String,
+    offset_ms: u64,
+}
+
+#[derive(Serialize)]
+struct Session {
+    timestamp: String,
+    text: String,
+    mode: String,
+    wpm: f64,
+    errors: usize,
+    keystrokes: Vec<Keystroke>,
+}
+
+fn history_path() -> PathBuf {
+    let mut p = dirs_home().unwrap_or_else(|| PathBuf::from("."));
+    p.push(".local");
+    p.push("share");
+    p.push("rstype");
+    p.push("history.jsonl");
+    p
+}
+
+fn save_session(session: &Session) {
+    let path = history_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
+        if let Ok(line) = serde_json::to_string(session) {
+            let _ = writeln!(file, "{}", line);
+        }
+    }
+}
+
+fn now_timestamp() -> String {
+    // RFC 3339-ish without pulling in chrono: use std::time
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // Format as ISO 8601 UTC manually
+    let s = secs % 60;
+    let m = (secs / 60) % 60;
+    let h = (secs / 3600) % 24;
+    let days = secs / 86400; // days since epoch
+    // Compute year/month/day from days-since-epoch (simple Gregorian)
+    let (year, month, day) = days_to_ymd(days);
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year, month, day, h, m, s)
+}
+
+fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
+    let mut year = 1970u64;
+    loop {
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        let days_in_year = if leap { 366 } else { 365 };
+        if days < days_in_year { break; }
+        days -= days_in_year;
+        year += 1;
+    }
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let month_days = [31u64, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut month = 1u64;
+    for &md in &month_days {
+        if days < md { break; }
+        days -= md;
+        month += 1;
+    }
+    (year, month, days + 1)
+}
+
+fn keycode_to_w3c(code: KeyCode) -> String {
+    match code {
+        KeyCode::Char(' ')       => "Space".to_string(),
+        KeyCode::Char(c)         => c.to_string(),
+        KeyCode::Backspace       => "Backspace".to_string(),
+        KeyCode::Enter           => "Enter".to_string(),
+        KeyCode::Tab             => "Tab".to_string(),
+        KeyCode::Esc             => "Escape".to_string(),
+        KeyCode::Delete          => "Delete".to_string(),
+        KeyCode::Insert          => "Insert".to_string(),
+        KeyCode::Home            => "Home".to_string(),
+        KeyCode::End             => "End".to_string(),
+        KeyCode::PageUp          => "PageUp".to_string(),
+        KeyCode::PageDown        => "PageDown".to_string(),
+        KeyCode::Up              => "ArrowUp".to_string(),
+        KeyCode::Down            => "ArrowDown".to_string(),
+        KeyCode::Left            => "ArrowLeft".to_string(),
+        KeyCode::Right           => "ArrowRight".to_string(),
+        KeyCode::CapsLock        => "CapsLock".to_string(),
+        KeyCode::F(n)            => format!("F{}", n),
+        _                        => "Unidentified".to_string(),
+    }
+}
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -103,6 +202,7 @@ struct App {
     typing_state: TypingState,
     start_time: Option<Instant>,
     wpm: f64,
+    keystrokes: Vec<Keystroke>,
 
     // navigation
     screen: Screen,
@@ -129,6 +229,7 @@ impl App {
             typing_state: TypingState::Waiting,
             start_time: None,
             wpm: 0.0,
+            keystrokes: Vec::new(),
             screen: Screen::Typing,
             config_cursor: 0,
         }
@@ -208,6 +309,23 @@ impl App {
                 }
             }
             TypingState::Waiting | TypingState::Typing => {
+                // Start timer on first keypress
+                if self.typing_state == TypingState::Waiting {
+                    if matches!(key.code, KeyCode::Char(_) | KeyCode::Backspace) {
+                        self.typing_state = TypingState::Typing;
+                        self.start_time = Some(Instant::now());
+                    }
+                }
+
+                // Record every keypress once the session has started
+                if let Some(start) = self.start_time {
+                    let offset_ms = start.elapsed().as_millis() as u64;
+                    self.keystrokes.push(Keystroke {
+                        typed: keycode_to_w3c(key.code),
+                        offset_ms,
+                    });
+                }
+
                 match key.code {
                     KeyCode::Backspace => {
                         if self.cursor > 0 {
@@ -217,11 +335,6 @@ impl App {
                     }
                     KeyCode::Char(ch) => {
                         self.error_flash = false;
-
-                        if self.typing_state == TypingState::Waiting {
-                            self.typing_state = TypingState::Typing;
-                            self.start_time = Some(Instant::now());
-                        }
 
                         let expected = self.target[self.cursor];
 
@@ -250,6 +363,18 @@ impl App {
                             let words = self.target.len() as f64 / 5.0;
                             self.wpm = words / minutes;
                             self.typing_state = TypingState::Done;
+
+                            save_session(&Session {
+                                timestamp: now_timestamp(),
+                                text: self.target.iter().collect(),
+                                mode: format!("{:?}", self.config.mode).to_lowercase(),
+                                wpm: self.wpm,
+                                errors: self.errors,
+                                keystrokes: self.keystrokes.iter().map(|k| Keystroke {
+                                    typed: k.typed.clone(),
+                                    offset_ms: k.offset_ms,
+                                }).collect(),
+                            });
                         }
                     }
                     _ => {}
@@ -297,11 +422,13 @@ fn render(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> i
         let area = frame.area();
         frame.render_widget(Block::default().style(Style::default().bg(Color::Black)), area);
 
-        // Reserve top row for toolbar
-        let toolbar_rect = Rect::new(area.x, area.y, area.width, 1);
-        let body_rect = Rect::new(area.x, area.y + 1, area.width, area.height.saturating_sub(1));
+        // Reserve top row for toolbar, bottom row for status bar
+        let toolbar_rect  = Rect::new(area.x, area.y, area.width, 1);
+        let statusbar_rect = Rect::new(area.x, area.y + area.height.saturating_sub(1), area.width, 1);
+        let body_rect     = Rect::new(area.x, area.y + 1, area.width, area.height.saturating_sub(2));
 
         render_toolbar(frame, toolbar_rect, app);
+        render_statusbar(frame, statusbar_rect);
 
         match app.screen {
             Screen::Config => render_config(frame, body_rect, app),
@@ -343,6 +470,15 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     spans.push(Span::styled(" ".repeat(area.width as usize), normal_style));
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn render_statusbar(frame: &mut ratatui::Frame, area: Rect) {
+    let style = Style::default().fg(Color::Black).bg(Color::White);
+    let text = format!(
+        " rstype by Mark Veltzer <mark.veltzer@gmail.com>{}",
+        " ".repeat(area.width as usize)
+    );
+    frame.render_widget(Paragraph::new(text).style(style), area);
 }
 
 fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
