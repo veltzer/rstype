@@ -684,9 +684,10 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         let accuracy = if total_keys > 0 {
             (app.cursor.saturating_sub(app.errors) as f64 / total_keys as f64 * 100.0) as u32
         } else { 100 };
+        let elapsed = app.start_time.map(|s| s.elapsed().as_secs()).unwrap_or(0);
         let stats_text = format!(
-            "WPM: {}   accuracy: {}%   errors: {}",
-            live_wpm, accuracy, app.errors
+            "WPM: {}   accuracy: {}%   errors: {}   time: {}:{:02}",
+            live_wpm, accuracy, app.errors, elapsed / 60, elapsed % 60
         );
         let stats_rect = Rect::new(text_rect.x, bar_rect.y + 1, text_rect.width, 1);
         if stats_rect.bottom() <= area.bottom() {
