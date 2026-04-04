@@ -2,6 +2,10 @@
 name = "rstype"
 version = "0.1.0"
 edition = "2024"
+authors = ["Mark Veltzer <mark.veltzer@gmail.com>"]
+description = "Rust based typing trainer"
+license = "MIT"
+repository = "https://github.com/veltzer/rstype"
 
 [dependencies]
 ratatui = "0.29"

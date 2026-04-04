@@ -315,35 +315,32 @@ fn render(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> i
 }
 
 fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
-    let active_style = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let normal_style = Style::default().fg(Color::Black).bg(Color::White);
-    let key_style   = Style::default().fg(Color::Blue).bg(Color::White).add_modifier(Modifier::BOLD);
+    let active_style     = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let normal_style     = Style::default().fg(Color::Black).bg(Color::White);
+    let key_style        = Style::default().fg(Color::Blue).bg(Color::White).add_modifier(Modifier::BOLD);
     let active_key_style = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let sep_style        = Style::default().fg(Color::DarkGray).bg(Color::White);
 
     let is_train  = app.screen == Screen::Typing;
     let is_config = app.screen == Screen::Config;
 
-    let mut spans = vec![Span::styled(" ", Style::default().bg(Color::White))];
+    // Helper: builds spans for one toolbar button like "^T Train"
+    let mut spans = vec![Span::styled("  ", normal_style)];
 
-    // (T)rain
-    let (k, r) = if is_train { (active_key_style, active_style) } else { (key_style, normal_style) };
-    spans.push(Span::styled("(", r));
-    spans.push(Span::styled("T", k));
-    spans.push(Span::styled(")rain ", r));
+    for (label, shortcut, active) in [
+        ("Train",  'T', is_train),
+        ("Config", 'C', is_config),
+        ("Exit",   'E', false),
+    ] {
+        let (ks, rs) = if active { (active_key_style, active_style) } else { (key_style, normal_style) };
+        spans.push(Span::styled("^", ks));
+        spans.push(Span::styled(shortcut.to_string(), ks));
+        spans.push(Span::styled(format!(" {label}"), rs));
+        spans.push(Span::styled("  ", sep_style));
+    }
 
-    // (C)onfig
-    let (k, r) = if is_config { (active_key_style, active_style) } else { (key_style, normal_style) };
-    spans.push(Span::styled("(", r));
-    spans.push(Span::styled("C", k));
-    spans.push(Span::styled(")onfig ", r));
-
-    // (E)xit — never "active", always same style
-    spans.push(Span::styled("(", normal_style));
-    spans.push(Span::styled("E", key_style));
-    spans.push(Span::styled(")xit ", normal_style));
-
-    // Fill the rest of the bar
-    spans.push(Span::styled(" ".repeat(area.width as usize), Style::default().bg(Color::White)));
+    // Fill remainder
+    spans.push(Span::styled(" ".repeat(area.width as usize), normal_style));
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -517,7 +514,7 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     }
 
     lines.push(Line::from(Span::styled(
-        "  ↑/↓ to move   Enter to save   T → back to train",
+        "  ↑/↓ to move   Enter to save   ^T back to train",
         Style::default().fg(Color::DarkGray),
     )));
 
