@@ -329,6 +329,7 @@ impl App {
         // Global Ctrl shortcuts — work from any screen
         if ctrl {
             match key.code {
+                KeyCode::Char('c') => return true, // standard kill, always works
                 KeyCode::Char('e') => return true,
                 KeyCode::Char('t') => {
                     self.screen = Screen::Typing;

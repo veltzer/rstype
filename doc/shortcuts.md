@@ -4,7 +4,7 @@
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+C` | Kill the app (OS signal, always works) |
+| `Ctrl+C` | Exit the application (intercepted by app to cleanly restore terminal) |
 | `Ctrl+T` | Go to Train screen |
 | `Ctrl+G` | Go to Config screen |
 | `Ctrl+H` | Go to History (calendar) screen |
@@ -43,6 +43,8 @@
 
 ## Notes
 
-- `Ctrl+C` is reserved for the OS (SIGINT) and is never intercepted by the app.
+- `Ctrl+C` is intercepted by the app (raw mode captures it before the OS). It exits
+  cleanly, restoring the terminal. This is preferable to a raw SIGINT which would
+  leave the terminal in raw mode.
 - Navigating away from the Train screen mid-session silently discards the
   in-progress session (it is not saved to history).
