@@ -200,22 +200,30 @@ enum TypingMode {
     Stop,
     /// Like Forward but must correct all errors (backspace works); only finishes when fully correct.
     Correct,
+    /// One mistake resets the entire session immediately.
+    SuddenDeath,
+    /// Typed characters are hidden (shown as ·); no visual feedback.
+    Blind,
 }
 
 impl TypingMode {
     fn label(self) -> &'static str {
         match self {
-            TypingMode::Forward => "Forward",
-            TypingMode::Stop    => "Stop",
-            TypingMode::Correct => "Correct",
+            TypingMode::Forward     => "Forward",
+            TypingMode::Stop        => "Stop",
+            TypingMode::Correct     => "Correct",
+            TypingMode::SuddenDeath => "Sudden Death",
+            TypingMode::Blind       => "Blind",
         }
     }
 
     fn description(self) -> &'static str {
         match self {
-            TypingMode::Forward => "Wrong key advances the cursor. The mistake is marked in red.\nSpeed matters more than accuracy.",
-            TypingMode::Stop    => "Wrong key is blocked — cursor stays put until you press\nthe right key. No mistakes recorded.",
-            TypingMode::Correct => "Wrong key advances but is marked in red. Backspace works.\nYou cannot finish until every character is correct.",
+            TypingMode::Forward     => "Wrong key advances the cursor. The mistake is marked in red.\nSpeed matters more than accuracy.",
+            TypingMode::Stop        => "Wrong key is blocked — cursor stays put until you press\nthe right key. No mistakes recorded.",
+            TypingMode::Correct     => "Wrong key advances but is marked in red. Backspace works.\nYou cannot finish until every character is correct.",
+            TypingMode::SuddenDeath => "One wrong key resets the session immediately.\nPerfect accuracy is required to finish.",
+            TypingMode::Blind       => "Typed characters are hidden as ·. No red/green feedback.\nTrust your muscle memory.",
         }
     }
 }
@@ -389,7 +397,7 @@ impl App {
     }
 
     fn on_key_config(&mut self, key: KeyEvent) {
-        const MODES: [TypingMode; 3] = [TypingMode::Forward, TypingMode::Stop, TypingMode::Correct];
+        const MODES: [TypingMode; 5] = [TypingMode::Forward, TypingMode::Stop, TypingMode::Correct, TypingMode::SuddenDeath, TypingMode::Blind];
         match key.code {
             KeyCode::Up => {
                 if self.config_cursor > 0 {
@@ -449,7 +457,7 @@ impl App {
                         let expected = self.target[self.cursor];
 
                         match self.config.mode {
-                            TypingMode::Forward | TypingMode::Correct => {
+                            TypingMode::Forward | TypingMode::Correct | TypingMode::Blind => {
                                 self.typed.push(ch);
                                 self.cursor += 1;
                                 if ch != expected {
@@ -463,6 +471,16 @@ impl App {
                                 } else {
                                     self.errors += 1;
                                     self.error_flash = true;
+                                }
+                            }
+                            TypingMode::SuddenDeath => {
+                                if ch == expected {
+                                    self.typed.push(ch);
+                                    self.cursor += 1;
+                                } else {
+                                    // Reset immediately
+                                    self.restart();
+                                    return;
                                 }
                             }
                         }
@@ -499,9 +517,11 @@ impl App {
     fn open_config(&mut self) {
         // Pre-select the current mode
         self.config_cursor = match self.config.mode {
-            TypingMode::Forward => 0,
-            TypingMode::Stop    => 1,
-            TypingMode::Correct => 2,
+            TypingMode::Forward     => 0,
+            TypingMode::Stop        => 1,
+            TypingMode::Correct     => 2,
+            TypingMode::SuddenDeath => 3,
+            TypingMode::Blind       => 4,
         };
         self.screen = Screen::Config;
     }
@@ -617,7 +637,12 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         spans.push(Span::styled("  ", sep_style));
     }
 
-    spans.push(Span::styled(" ".repeat(area.width as usize), normal_style));
+    // Right-align "rstype by Mark Veltzer" in the remaining space
+    let title = "rstype by Mark Veltzer  ";
+    let title_len = title.len() as u16;
+    let pad = area.width.saturating_sub(title_len);
+    spans.push(Span::styled(" ".repeat(pad as usize), normal_style));
+    spans.push(Span::styled(title, Style::default().fg(Color::DarkGray).bg(Color::White)));
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -625,23 +650,26 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 fn render_statusbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let style = Style::default().fg(Color::Black).bg(Color::White);
     let mode_label = match app.config.mode {
-        TypingMode::Forward => "forward",
-        TypingMode::Stop    => "stop",
-        TypingMode::Correct => "correct",
+        TypingMode::Forward      => "forward",
+        TypingMode::Stop         => "stop",
+        TypingMode::Correct      => "correct",
+        TypingMode::SuddenDeath  => "sudden death",
+        TypingMode::Blind        => "blind",
     };
-    let text = format!(
-        " rstype by Mark Veltzer <mark.veltzer@gmail.com>  [mode: {mode_label}]{}",
-        " ".repeat(area.width as usize)
-    );
+    let text = format!(" mode: {mode_label}{}", " ".repeat(area.width as usize));
     frame.render_widget(Paragraph::new(text).style(style), area);
 }
 
 fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let mut spans: Vec<Span> = Vec::new();
 
+    let blind = app.config.mode == TypingMode::Blind;
+
     for (i, &ch) in app.target.iter().enumerate() {
         let span = if i < app.cursor {
-            if app.typed[i] == ch {
+            if blind {
+                Span::styled("·", Style::default().fg(Color::DarkGray))
+            } else if app.typed[i] == ch {
                 Span::styled(ch.to_string(), Style::default().fg(Color::Green))
             } else {
                 Span::styled(
@@ -850,7 +878,7 @@ fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 }
 
 fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
-    const MODES: [TypingMode; 3] = [TypingMode::Forward, TypingMode::Stop, TypingMode::Correct];
+        const MODES: [TypingMode; 5] = [TypingMode::Forward, TypingMode::Stop, TypingMode::Correct, TypingMode::SuddenDeath, TypingMode::Blind];
 
     let mut lines = vec![
         Line::from(""),
