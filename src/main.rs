@@ -212,11 +212,22 @@ impl TypingMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Config {
     mode: TypingMode,
+    #[serde(default = "default_min_cols")]
+    min_cols: u16,
+    #[serde(default = "default_min_rows")]
+    min_rows: u16,
 }
+
+fn default_min_cols() -> u16 { 76 }
+fn default_min_rows() -> u16 { 26 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { mode: TypingMode::Forward }
+        Self {
+            mode: TypingMode::Forward,
+            min_cols: default_min_cols(),
+            min_rows: default_min_rows(),
+        }
     }
 }
 
@@ -863,13 +874,24 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() -> io::Result<()> {
+    let config = load_config();
+
+    // Check terminal size before entering raw/alternate mode
+    let (cols, rows) = crossterm::terminal::size()?;
+    if cols < config.min_cols || rows < config.min_rows {
+        eprintln!(
+            "Error: terminal too small (current: {}×{}, required: {}×{})",
+            cols, rows, config.min_cols, config.min_rows
+        );
+        std::process::exit(1);
+    }
+
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
-    let config = load_config();
     let mut app = App::new(config);
 
     loop {
