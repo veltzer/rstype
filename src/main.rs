@@ -615,12 +615,21 @@ fn render(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> i
         render_toolbar(frame, toolbar_rect, app);
         render_statusbar(frame, statusbar_rect, app);
 
+        // 2-column left indent for content screens
+        let indent = 2u16;
+        let indented = Rect::new(
+            body_rect.x + indent,
+            body_rect.y,
+            body_rect.width.saturating_sub(indent),
+            body_rect.height,
+        );
+
         match app.screen {
             Screen::Config => render_config(frame, body_rect, app),
-            Screen::Calendar => render_calendar(frame, body_rect, app),
+            Screen::Calendar => render_calendar(frame, indented, app),
             Screen::Typing => match app.typing_state {
                 TypingState::Done => render_done(frame, body_rect, app),
-                _ => render_typing(frame, body_rect, app),
+                _ => render_typing(frame, indented, app),
             },
         }
     })?;
@@ -861,6 +870,7 @@ fn render_calendar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 
     let title = format!("  {} {}   ← prev   → next", month_name(month), year);
     let mut all_lines = vec![
+        Line::from(""),
         Line::from(Span::styled(title, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
     ];
     all_lines.extend(lines);
