@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -116,6 +117,79 @@ fn keycode_to_w3c(code: KeyCode) -> String {
     }
 }
 
+// ── Calendar helpers ──────────────────────────────────────────────────────────
+
+fn is_leap_year(year: i32) -> bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+}
+
+fn days_in_month_cal(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => if is_leap_year(year) { 29 } else { 28 },
+        _ => 31,
+    }
+}
+
+/// Returns 0=Monday .. 6=Sunday for the first day of the given month.
+fn first_weekday_of_month(year: i32, month: u32) -> u32 {
+    // Tomohiko Sakamoto's algorithm (returns 0=Sun..6=Sat), convert to Mon=0..Sun=6
+    let t = [0u32, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+    let y = if month < 3 { year - 1 } else { year };
+    let yu = y as u32;
+    let dow = (yu + yu / 4 - yu / 100 + yu / 400 + t[(month - 1) as usize] + 1) % 7;
+    (dow + 6) % 7 // Sun=0 -> Mon=0
+}
+
+fn month_name(month: u32) -> &'static str {
+    match month {
+        1 => "January", 2 => "February", 3 => "March",    4 => "April",
+        5 => "May",     6 => "June",     7 => "July",      8 => "August",
+        9 => "September", 10 => "October", 11 => "November", 12 => "December",
+        _ => "?",
+    }
+}
+
+/// (year, month) today from system clock.
+fn today_ym() -> (i32, u32) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let days = secs / 86400;
+    let (y, m, _) = days_to_ymd(days);
+    (y as i32, m as u32)
+}
+
+/// Parse JSONL history and return a map of "YYYY-MM-DD" -> (session_count, avg_wpm).
+fn load_history_stats() -> HashMap<String, (usize, f64)> {
+    let mut map: HashMap<String, (usize, f64)> = HashMap::new();
+    let path = history_path();
+    let Ok(content) = fs::read_to_string(&path) else { return map; };
+    for line in content.lines() {
+        // Just extract "timestamp" and "wpm" fields cheaply
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+            if let (Some(ts), Some(wpm)) = (
+                val.get("timestamp").and_then(|v| v.as_str()),
+                val.get("wpm").and_then(|v| v.as_f64()),
+            ) {
+                let date_key = ts.get(..10).unwrap_or("").to_string();
+                if date_key.len() == 10 {
+                    let entry = map.entry(date_key).or_insert((0, 0.0));
+                    entry.0 += 1;
+                    entry.1 += wpm;
+                }
+            }
+        }
+    }
+    // Convert wpm sum -> average
+    for (_, v) in map.iter_mut() {
+        v.1 /= v.0 as f64;
+    }
+    map
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -181,6 +255,7 @@ fn save_config(cfg: &Config) {
 enum Screen {
     Typing,
     Config,
+    Calendar,
 }
 
 struct App {
@@ -208,6 +283,10 @@ struct App {
     screen: Screen,
     /// Selected index on the config screen.
     config_cursor: usize,
+    // calendar
+    calendar_year: i32,
+    calendar_month: u32,
+    calendar_stats: HashMap<String, (usize, f64)>,
 }
 
 #[derive(PartialEq)]
@@ -232,6 +311,9 @@ impl App {
             keystrokes: Vec::new(),
             screen: Screen::Typing,
             config_cursor: 0,
+            calendar_year: 0,
+            calendar_month: 1,
+            calendar_stats: HashMap::new(),
         }
     }
 
@@ -252,18 +334,22 @@ impl App {
                     self.screen = Screen::Typing;
                     return false;
                 }
-                KeyCode::Char('c') => {
+                KeyCode::Char('g') => {
                     self.open_config();
+                    return false;
+                }
+                KeyCode::Char('h') => {
+                    self.open_calendar();
                     return false;
                 }
                 _ => {}
             }
         }
 
-        // Esc goes back to train screen (from config), or quits if already on train
+        // Esc goes back to train screen (from config/calendar), or quits if already on train
         if key.code == KeyCode::Esc {
             match self.screen {
-                Screen::Config => {
+                Screen::Config | Screen::Calendar => {
                     self.screen = Screen::Typing;
                     return false;
                 }
@@ -274,6 +360,7 @@ impl App {
         match self.screen {
             Screen::Config => self.on_key_config(key),
             Screen::Typing => self.on_key_typing(key),
+            Screen::Calendar => self.on_key_calendar(key),
         }
         false
     }
@@ -392,6 +479,36 @@ impl App {
         self.screen = Screen::Config;
     }
 
+    fn open_calendar(&mut self) {
+        let (y, m) = today_ym();
+        self.calendar_year = y;
+        self.calendar_month = m;
+        self.calendar_stats = load_history_stats();
+        self.screen = Screen::Calendar;
+    }
+
+    fn on_key_calendar(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Left => {
+                if self.calendar_month == 1 {
+                    self.calendar_month = 12;
+                    self.calendar_year -= 1;
+                } else {
+                    self.calendar_month -= 1;
+                }
+            }
+            KeyCode::Right => {
+                if self.calendar_month == 12 {
+                    self.calendar_month = 1;
+                    self.calendar_year += 1;
+                } else {
+                    self.calendar_month += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn accuracy(&self) -> f64 {
         let total_keys = self.typed.len() + self.errors;
         if total_keys == 0 {
@@ -432,6 +549,7 @@ fn render(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> i
 
         match app.screen {
             Screen::Config => render_config(frame, body_rect, app),
+            Screen::Calendar => render_calendar(frame, body_rect, app),
             Screen::Typing => match app.typing_state {
                 TypingState::Done => render_done(frame, body_rect, app),
                 _ => render_typing(frame, body_rect, app),
@@ -448,16 +566,18 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let active_key_style = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
     let sep_style        = Style::default().fg(Color::DarkGray).bg(Color::White);
 
-    let is_train  = app.screen == Screen::Typing;
-    let is_config = app.screen == Screen::Config;
+    let is_train    = app.screen == Screen::Typing;
+    let is_config   = app.screen == Screen::Config;
+    let is_calendar = app.screen == Screen::Calendar;
 
     // Helper: builds spans for one toolbar button like "^T Train"
     let mut spans = vec![Span::styled("  ", normal_style)];
 
     for (label, shortcut, active) in [
-        ("Train",  'T', is_train),
-        ("Config", 'C', is_config),
-        ("Exit",   'E', false),
+        ("Train",   'T', is_train),
+        ("Config",  'G', is_config),
+        ("History", 'H', is_calendar),
+        ("Exit",    'E', false),
     ] {
         let (ks, rs) = if active { (active_key_style, active_style) } else { (key_style, normal_style) };
         spans.push(Span::styled("^", ks));
@@ -560,6 +680,82 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             bar_rect,
         );
     }
+}
+
+fn render_calendar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    let year = app.calendar_year;
+    let month = app.calendar_month;
+    let first_dow = first_weekday_of_month(year, month); // 0=Mon..6=Sun
+    let num_days = days_in_month_cal(year, month);
+
+    const CELL: usize = 10;
+    let dow_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+    let header_spans: Vec<Span> = dow_names
+        .iter()
+        .map(|n| Span::styled(
+            format!("{:<CELL$}", n),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ))
+        .collect();
+
+    let mut lines: Vec<Line> = vec![Line::from(""), Line::from(header_spans), Line::from("")];
+
+    // Total slots rounded up to full weeks
+    let total_slots = ((first_dow + num_days) as usize + 6) / 7 * 7;
+    let mut day_spans: Vec<Span> = Vec::new();
+    let mut stat_spans: Vec<Span> = Vec::new();
+
+    for slot in 0..total_slots {
+        let col = slot % 7;
+        let day_num = slot as i32 - first_dow as i32 + 1;
+
+        if day_num < 1 || day_num > num_days as i32 {
+            day_spans.push(Span::raw(format!("{:<CELL$}", "")));
+            stat_spans.push(Span::raw(format!("{:<CELL$}", "")));
+        } else {
+            let d = day_num as u32;
+            let date_key = format!("{:04}-{:02}-{:02}", year, month, d);
+            let stat_text = if let Some(&(count, avg)) = app.calendar_stats.get(&date_key) {
+                format!("{}s {:.0}w", count, avg)
+            } else {
+                String::new()
+            };
+            day_spans.push(Span::styled(
+                format!("{:<CELL$}", d),
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            ));
+            stat_spans.push(Span::styled(
+                format!("{:<CELL$}", stat_text),
+                Style::default().fg(Color::Cyan),
+            ));
+        }
+
+        // End of week — flush
+        if col == 6 {
+            lines.push(Line::from(day_spans.clone()));
+            lines.push(Line::from(stat_spans.clone()));
+            lines.push(Line::from(""));
+            day_spans.clear();
+            stat_spans.clear();
+        }
+    }
+
+    let title = format!(" {} {}   ← prev   → next ", month_name(month), year);
+    let box_width = (CELL * 7 + 4) as u16;
+    let box_height = (lines.len() + 2) as u16;
+    let box_rect = centered_rect(box_width, box_height, area);
+
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .title_alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Cyan)),
+        ),
+        box_rect,
+    );
 }
 
 fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
