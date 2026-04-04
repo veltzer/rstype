@@ -198,13 +198,24 @@ enum TypingMode {
     Forward,
     /// Cursor stays on wrong key until the correct one is pressed.
     Stop,
+    /// Like Forward but must correct all errors (backspace works); only finishes when fully correct.
+    Correct,
 }
 
 impl TypingMode {
     fn label(self) -> &'static str {
         match self {
-            TypingMode::Forward => "Forward — wrong key advances cursor (marked red)",
-            TypingMode::Stop => "Stop    — wrong key blocks cursor until corrected",
+            TypingMode::Forward => "Forward",
+            TypingMode::Stop    => "Stop",
+            TypingMode::Correct => "Correct",
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            TypingMode::Forward => "Wrong key advances the cursor. The mistake is marked in red.\nSpeed matters more than accuracy.",
+            TypingMode::Stop    => "Wrong key is blocked — cursor stays put until you press\nthe right key. No mistakes recorded.",
+            TypingMode::Correct => "Wrong key advances but is marked in red. Backspace works.\nYou cannot finish until every character is correct.",
         }
     }
 }
@@ -378,7 +389,7 @@ impl App {
     }
 
     fn on_key_config(&mut self, key: KeyEvent) {
-        const MODES: [TypingMode; 2] = [TypingMode::Forward, TypingMode::Stop];
+        const MODES: [TypingMode; 3] = [TypingMode::Forward, TypingMode::Stop, TypingMode::Correct];
         match key.code {
             KeyCode::Up => {
                 if self.config_cursor > 0 {
@@ -438,7 +449,7 @@ impl App {
                         let expected = self.target[self.cursor];
 
                         match self.config.mode {
-                            TypingMode::Forward => {
+                            TypingMode::Forward | TypingMode::Correct => {
                                 self.typed.push(ch);
                                 self.cursor += 1;
                                 if ch != expected {
@@ -456,7 +467,10 @@ impl App {
                             }
                         }
 
-                        if self.cursor == self.target.len() {
+                        // In Correct mode, only finish when every character matches
+                        let all_correct = self.typed.iter().zip(self.target.iter()).all(|(a, b)| a == b);
+                        let at_end = self.cursor == self.target.len();
+                        if at_end && (self.config.mode != TypingMode::Correct || all_correct) {
                             let elapsed = self.start_time.unwrap().elapsed();
                             let minutes = elapsed.as_secs_f64() / 60.0;
                             let words = self.target.len() as f64 / 5.0;
@@ -486,7 +500,8 @@ impl App {
         // Pre-select the current mode
         self.config_cursor = match self.config.mode {
             TypingMode::Forward => 0,
-            TypingMode::Stop => 1,
+            TypingMode::Stop    => 1,
+            TypingMode::Correct => 2,
         };
         self.screen = Screen::Config;
     }
@@ -608,7 +623,8 @@ fn render_statusbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let style = Style::default().fg(Color::Black).bg(Color::White);
     let mode_label = match app.config.mode {
         TypingMode::Forward => "forward",
-        TypingMode::Stop => "stop",
+        TypingMode::Stop    => "stop",
+        TypingMode::Correct => "correct",
     };
     let text = format!(
         " rstype by Mark Veltzer <mark.veltzer@gmail.com>  [mode: {mode_label}]{}",
@@ -829,7 +845,7 @@ fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 }
 
 fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
-    const MODES: [TypingMode; 2] = [TypingMode::Forward, TypingMode::Stop];
+    const MODES: [TypingMode; 3] = [TypingMode::Forward, TypingMode::Stop, TypingMode::Correct];
 
     let mut lines = vec![
         Line::from(""),
