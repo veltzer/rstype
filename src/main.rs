@@ -807,23 +807,27 @@ fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     };
 
     let lines = vec![
+        Line::from(Span::styled(
+            "── Results ──",
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from(vec![
-            Span::raw("  Speed:    "),
+            Span::raw("Speed:    "),
             Span::styled(
                 format!("{:.1} WPM", app.wpm),
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
-            Span::raw("  Accuracy: "),
+            Span::raw("Accuracy: "),
             Span::styled(
                 format!("{:.1}%", accuracy),
                 Style::default().fg(acc_color).add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
-            Span::raw("  Errors:   "),
+            Span::raw("Errors:   "),
             Span::styled(
                 format!("{}", app.errors),
                 Style::default()
@@ -832,17 +836,15 @@ fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             ),
         ]),
         Line::from(""),
+        Line::from(Span::styled(
+            "Enter / Space / R to restart",
+            Style::default().fg(Color::DarkGray),
+        )),
     ];
 
-    let result_rect = centered_rect(52, 8, area);
+    let result_rect = centered_rect(36, lines.len() as u16, area);
     frame.render_widget(
-        Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Results ")
-                .title_alignment(Alignment::Center)
-                .style(Style::default().fg(Color::Yellow)),
-        ),
+        Paragraph::new(lines).alignment(Alignment::Center),
         result_rect,
     );
 }
@@ -887,12 +889,7 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             Style::default().fg(Color::White),
         )));
     }
-
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "  ↑/↓ to move   Enter to save   ^T back to train",
-        Style::default().fg(Color::DarkGray),
-    )));
 
     let box_rect = centered_rect(64, (lines.len() as u16) + 2, area);
     frame.render_widget(
