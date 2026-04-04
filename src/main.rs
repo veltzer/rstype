@@ -15,7 +15,28 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Terminal;
 use serde::{Deserialize, Serialize};
 
-const TARGET_TEXT: &str = "The quick brown fox jumps over the lazy dog";
+const TARGET_TEXT: &str = "\
+To be, or not to be, that is the question: \
+Whether 'tis nobler in the mind to suffer \
+The slings and arrows of outrageous fortune, \
+Or to take arms against a sea of troubles \
+And by opposing end them. To die—to sleep, \
+No more; and by a sleep to say we end \
+The heart-ache and the thousand natural shocks \
+That flesh is heir to: 'tis a consummation \
+Devoutly to be wish'd. To die, to sleep; \
+To sleep, perchance to dream—ay, there's the rub: \
+For in that sleep of death what dreams may come, \
+When we have shuffled off this mortal coil, \
+Must give us pause—there's the respect \
+That makes calamity of so long life. \
+For who would bear the whips and scorns of time, \
+The oppressor's wrong, the proud man's contumely, \
+The pangs of dispriz'd love, the law's delay, \
+The insolence of office, and the spurns \
+That patient merit of the unworthy takes, \
+When he himself might his quietus make \
+With a bare bodkin?";
 
 // ── History ───────────────────────────────────────────────────────────────────
 
@@ -663,67 +684,99 @@ fn render_statusbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 }
 
 fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
-    let mut spans: Vec<Span> = Vec::new();
-
     let blind = app.config.mode == TypingMode::Blind;
 
-    for (i, &ch) in app.target.iter().enumerate() {
-        let span = if i < app.cursor {
-            if blind {
-                Span::styled("·", Style::default().fg(Color::DarkGray))
-            } else if app.typed[i] == ch {
-                Span::styled(ch.to_string(), Style::default().fg(Color::Green))
-            } else {
-                Span::styled(
-                    ch.to_string(),
-                    Style::default().fg(Color::Red).add_modifier(Modifier::UNDERLINED),
-                )
-            }
-        } else if i == app.cursor {
-            let bg = if app.error_flash { Color::Red } else { Color::White };
-            Span::styled(
-                ch.to_string(),
-                Style::default().fg(Color::Black).bg(bg).add_modifier(Modifier::BOLD),
-            )
+    // ── Word-wrap the target into lines that fit the display width ─────────
+    let max_w = (area.width as usize).saturating_sub(4).max(20);
+    // Build a list of (start_offset, end_offset) char ranges per visual line
+    let mut lines_ranges: Vec<(usize, usize)> = Vec::new();
+    let text = &app.target;
+    let mut pos = 0;
+    while pos < text.len() {
+        // Find how many chars fit: try to break at a space
+        let remaining = text.len() - pos;
+        let take = remaining.min(max_w);
+        let end = if pos + take >= text.len() {
+            text.len()
         } else {
-            Span::styled(ch.to_string(), Style::default().fg(Color::DarkGray))
+            // Look back for a space to break on
+            let slice = &text[pos..pos + take];
+            if let Some(sp) = slice.iter().rposition(|&c| c == ' ') {
+                pos + sp + 1 // break after the space
+            } else {
+                pos + take // no space, hard break
+            }
         };
-        spans.push(span);
+        lines_ranges.push((pos, end));
+        pos = end;
     }
 
-    let text_width = (app.target.len() as u16 + 4).min(area.width);
+    // Find which visual line the cursor is on
+    let cursor_line = lines_ranges
+        .iter()
+        .position(|&(s, e)| app.cursor >= s && app.cursor < e.max(s + 1))
+        .unwrap_or(lines_ranges.len().saturating_sub(1));
 
-    // Center the text row vertically; place progress + stats just below it
-    let text_rect = centered_rect(text_width, 1, area);
+    // Reserve rows: progress bar + stats + some margin
+    let reserved = 5u16;
+    let viewport_h = area.height.saturating_sub(reserved) as usize;
+    let viewport_h = viewport_h.max(1);
 
-    frame.render_widget(
-        Paragraph::new(Line::from(spans)).alignment(Alignment::Center),
-        text_rect,
-    );
+    // Scroll so cursor line stays in the middle of the viewport
+    let scroll_top = if cursor_line < viewport_h / 2 {
+        0
+    } else {
+        cursor_line - viewport_h / 2
+    };
 
-    // Progress bar
+    // ── Render visible lines ───────────────────────────────────────────────
+    let view_y = area.y + 1; // 1 row top margin
+    for (row, &(start, end)) in lines_ranges
+        .iter()
+        .enumerate()
+        .skip(scroll_top)
+        .take(viewport_h)
+    {
+        let mut spans: Vec<Span> = Vec::new();
+        for i in start..end {
+            let ch = text[i];
+            let span = if i < app.cursor {
+                if blind {
+                    Span::styled("·", Style::default().fg(Color::DarkGray))
+                } else if app.typed[i] == ch {
+                    Span::styled(ch.to_string(), Style::default().fg(Color::Green))
+                } else {
+                    Span::styled(ch.to_string(), Style::default().fg(Color::Red).add_modifier(Modifier::UNDERLINED))
+                }
+            } else if i == app.cursor {
+                let bg = if app.error_flash { Color::Red } else { Color::White };
+                Span::styled(ch.to_string(), Style::default().fg(Color::Black).bg(bg).add_modifier(Modifier::BOLD))
+            } else {
+                Span::styled(ch.to_string(), Style::default().fg(Color::DarkGray))
+            };
+            spans.push(span);
+        }
+        let render_row = view_y + (row - scroll_top) as u16;
+        if render_row < area.bottom().saturating_sub(reserved) {
+            let line_rect = Rect::new(area.x + 2, render_row, area.width.saturating_sub(4), 1);
+            frame.render_widget(Paragraph::new(Line::from(spans)), line_rect);
+        }
+    }
+
+    // ── Progress bar ──────────────────────────────────────────────────────
     let progress_pct = app.cursor as f64 / app.target.len() as f64;
-    let bar_width = text_rect.width as f64;
-    let filled = (bar_width * progress_pct) as usize;
-    let empty = bar_width as usize - filled;
-    let bar_text = format!(
-        "[{}{}] {:.0}%",
-        "█".repeat(filled),
-        "░".repeat(empty),
-        progress_pct * 100.0,
+    let bar_w = area.width.saturating_sub(4) as usize;
+    let filled = (bar_w as f64 * progress_pct) as usize;
+    let empty = bar_w - filled;
+    let bar_text = format!("[{}{}] {:.0}%", "█".repeat(filled), "░".repeat(empty), progress_pct * 100.0);
+    let bar_y = area.bottom().saturating_sub(reserved - 1);
+    let bar_rect = Rect::new(area.x + 2, bar_y, area.width.saturating_sub(4), 1);
+    frame.render_widget(
+        Paragraph::new(bar_text).style(Style::default().fg(Color::Yellow)),
+        bar_rect,
     );
 
-    let bar_rect = Rect::new(text_rect.x, text_rect.y + 2, text_rect.width, 1);
-    if bar_rect.bottom() <= area.bottom() {
-        frame.render_widget(
-            Paragraph::new(bar_text)
-                .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::Yellow)),
-            bar_rect,
-        );
-    }
-
-    // Live stats row (only while typing)
+    // ── Live stats ────────────────────────────────────────────────────────
     if app.typing_state == TypingState::Typing {
         let live_wpm = if let Some(start) = app.start_time {
             let mins = start.elapsed().as_secs_f64() / 60.0;
@@ -738,12 +791,10 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             "WPM: {}   accuracy: {}%   errors: {}   time: {}:{:02}",
             live_wpm, accuracy, app.errors, elapsed / 60, elapsed % 60
         );
-        let stats_rect = Rect::new(text_rect.x, bar_rect.y + 1, text_rect.width, 1);
+        let stats_rect = Rect::new(area.x + 2, bar_y + 2, area.width.saturating_sub(4), 1);
         if stats_rect.bottom() <= area.bottom() {
             frame.render_widget(
-                Paragraph::new(stats_text)
-                    .alignment(Alignment::Center)
-                    .style(Style::default().fg(Color::Cyan)),
+                Paragraph::new(stats_text).style(Style::default().fg(Color::Cyan)),
                 stats_rect,
             );
         }
