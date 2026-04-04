@@ -557,7 +557,7 @@ fn render(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> i
         let body_rect     = Rect::new(area.x, area.y + 1, area.width, area.height.saturating_sub(2));
 
         render_toolbar(frame, toolbar_rect, app);
-        render_statusbar(frame, statusbar_rect);
+        render_statusbar(frame, statusbar_rect, app);
 
         match app.screen {
             Screen::Config => render_config(frame, body_rect, app),
