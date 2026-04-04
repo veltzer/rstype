@@ -589,31 +589,34 @@ fn render(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> i
 fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let active_style     = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
     let normal_style     = Style::default().fg(Color::Black).bg(Color::White);
-    let key_style        = Style::default().fg(Color::Blue).bg(Color::White).add_modifier(Modifier::BOLD);
-    let active_key_style = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let key_style        = Style::default().fg(Color::Blue).bg(Color::White).add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+    let active_key_style = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
     let sep_style        = Style::default().fg(Color::DarkGray).bg(Color::White);
 
     let is_train    = app.screen == Screen::Typing;
     let is_config   = app.screen == Screen::Config;
     let is_calendar = app.screen == Screen::Calendar;
 
-    // Helper: builds spans for one toolbar button like "^T Train"
     let mut spans = vec![Span::styled("  ", normal_style)];
 
-    for (label, shortcut, active) in [
-        ("Train",   'T', is_train),
-        ("Config",  'G', is_config),
-        ("History", 'H', is_calendar),
-        ("Exit",    'E', false),
+    // Each entry: (before key, key char, after key, is_active)
+    for (before, key, after, active) in [
+        ("",      'T', "rain",   is_train),
+        ("Confi", 'G', "",       is_config),
+        ("",      'H', "istory", is_calendar),
+        ("",      'E', "xit",    false),
     ] {
         let (ks, rs) = if active { (active_key_style, active_style) } else { (key_style, normal_style) };
-        spans.push(Span::styled("^", ks));
-        spans.push(Span::styled(shortcut.to_string(), ks));
-        spans.push(Span::styled(format!(" {label}"), rs));
+        if !before.is_empty() {
+            spans.push(Span::styled(before, rs));
+        }
+        spans.push(Span::styled(key.to_string(), ks));
+        if !after.is_empty() {
+            spans.push(Span::styled(after, rs));
+        }
         spans.push(Span::styled("  ", sep_style));
     }
 
-    // Fill remainder
     spans.push(Span::styled(" ".repeat(area.width as usize), normal_style));
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
