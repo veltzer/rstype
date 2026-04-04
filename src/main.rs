@@ -11,7 +11,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 use ratatui::Terminal;
 use serde::{Deserialize, Serialize};
 
@@ -729,8 +729,7 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         cursor_line - viewport_h / 2
     };
 
-    // ── Render visible lines ───────────────────────────────────────────────
-    let view_y = area.y + 1; // 1 row top margin
+    let view_y = area.y; // start from top
     for (row, &(start, end)) in lines_ranges
         .iter()
         .enumerate()
@@ -758,19 +757,19 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         }
         let render_row = view_y + (row - scroll_top) as u16;
         if render_row < area.bottom().saturating_sub(reserved) {
-            let line_rect = Rect::new(area.x + 2, render_row, area.width.saturating_sub(4), 1);
+            let line_rect = Rect::new(area.x, render_row, area.width, 1);
             frame.render_widget(Paragraph::new(Line::from(spans)), line_rect);
         }
     }
 
     // ── Progress bar ──────────────────────────────────────────────────────
     let progress_pct = app.cursor as f64 / app.target.len() as f64;
-    let bar_w = area.width.saturating_sub(4) as usize;
+    let bar_w = area.width as usize;
     let filled = (bar_w as f64 * progress_pct) as usize;
     let empty = bar_w - filled;
     let bar_text = format!("[{}{}] {:.0}%", "█".repeat(filled), "░".repeat(empty), progress_pct * 100.0);
     let bar_y = area.bottom().saturating_sub(reserved - 1);
-    let bar_rect = Rect::new(area.x + 2, bar_y, area.width.saturating_sub(4), 1);
+    let bar_rect = Rect::new(area.x, bar_y, area.width, 1);
     frame.render_widget(
         Paragraph::new(bar_text).style(Style::default().fg(Color::Yellow)),
         bar_rect,
@@ -791,7 +790,7 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             "WPM: {}   accuracy: {}%   errors: {}   time: {}:{:02}",
             live_wpm, accuracy, app.errors, elapsed / 60, elapsed % 60
         );
-        let stats_rect = Rect::new(area.x + 2, bar_y + 2, area.width.saturating_sub(4), 1);
+        let stats_rect = Rect::new(area.x, bar_y + 2, area.width, 1);
         if stats_rect.bottom() <= area.bottom() {
             frame.render_widget(
                 Paragraph::new(stats_text).style(Style::default().fg(Color::Cyan)),
@@ -860,21 +859,13 @@ fn render_calendar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         }
     }
 
-    let title = format!(" {} {}   ← prev   → next ", month_name(month), year);
-    let box_width  = (CELL * 7 + 4) as u16;
-    let box_height = (2 + 1 + 6 * 3 + 2) as u16; // header + blank + 6*(day+stat+blank) + borders
-    let box_rect = centered_rect(box_width, box_height, area);
+    let title = format!("  {} {}   ← prev   → next", month_name(month), year);
+    let mut all_lines = vec![
+        Line::from(Span::styled(title, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+    ];
+    all_lines.extend(lines);
 
-    frame.render_widget(
-        Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .title_alignment(Alignment::Center)
-                .style(Style::default().fg(Color::Cyan)),
-        ),
-        box_rect,
-    );
+    frame.render_widget(Paragraph::new(all_lines), area);
 }
 
 fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
@@ -931,7 +922,7 @@ fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 }
 
 fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
-        const MODES: [TypingMode; 5] = [TypingMode::Forward, TypingMode::Stop, TypingMode::Correct, TypingMode::SuddenDeath, TypingMode::Blind];
+    const MODES: [TypingMode; 5] = [TypingMode::Forward, TypingMode::Stop, TypingMode::Correct, TypingMode::SuddenDeath, TypingMode::Blind];
 
     let mut lines = vec![
         Line::from(""),
@@ -972,17 +963,7 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     }
     lines.push(Line::from(""));
 
-    let box_rect = centered_rect(64, (lines.len() as u16) + 2, area);
-    frame.render_widget(
-        Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Config — ~/.config/rstype.toml ")
-                .title_alignment(Alignment::Center)
-                .style(Style::default().fg(Color::Magenta)),
-        ),
-        box_rect,
-    );
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
