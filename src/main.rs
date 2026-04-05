@@ -313,6 +313,7 @@ enum Screen {
     Config,
     Calendar,
     About,
+    Exit,
 }
 
 struct App {
@@ -387,7 +388,10 @@ impl App {
         if ctrl {
             match key.code {
                 KeyCode::Char('c') => return true, // standard kill, always works
-                KeyCode::Char('e') => return true,
+                KeyCode::Char('e') => {
+                    self.screen = Screen::Exit;
+                    return false;
+                }
                 KeyCode::Char('t') => {
                     self.screen = Screen::Typing;
                     return false;
@@ -413,7 +417,7 @@ impl App {
         let typing_in_progress = self.screen == Screen::Typing
             && self.typing_state == TypingState::Typing;
         if !typing_in_progress {
-            const ORDER: [Screen; 4] = [Screen::Typing, Screen::Config, Screen::Calendar, Screen::About];
+            const ORDER: [Screen; 5] = [Screen::Typing, Screen::Config, Screen::Calendar, Screen::About, Screen::Exit];
             let cur = ORDER.iter().position(|s| s == &self.screen).unwrap_or(0);
             if key.code == KeyCode::Left {
                 self.screen = ORDER[(cur + ORDER.len() - 1) % ORDER.len()].clone();
@@ -436,15 +440,22 @@ impl App {
                     self.screen = Screen::Typing;
                     return false;
                 }
+                Screen::Exit => return true,
                 Screen::Typing => return true,
             }
+        }
+
+        // On Exit screen: Enter confirms quit
+        if self.screen == Screen::Exit && key.code == KeyCode::Enter {
+            return true;
         }
 
         match self.screen {
             Screen::Config   => self.on_key_config(key),
             Screen::Typing   => self.on_key_typing(key),
             Screen::Calendar => self.on_key_calendar(key),
-            Screen::About    => {}  // no interaction needed
+            Screen::About    => {}
+            Screen::Exit     => {}
         }
         false
     }
@@ -660,6 +671,7 @@ fn render(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> i
             Screen::Config   => render_config(frame, body_rect, app),
             Screen::Calendar => render_calendar(frame, indented, app),
             Screen::About    => render_about(frame, indented),
+            Screen::Exit     => render_exit(frame, indented),
             Screen::Typing   => match app.typing_state {
                 TypingState::Done => render_done(frame, body_rect, app),
                 _ => render_typing(frame, indented, app),
@@ -680,16 +692,16 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let is_config   = app.screen == Screen::Config;
     let is_calendar = app.screen == Screen::Calendar;
     let is_about    = app.screen == Screen::About;
+    let is_exit     = app.screen == Screen::Exit;
 
     let mut spans = vec![Span::styled("  ", normal_style)];
 
-    // Each entry: (before key, key char, after key, is_active)
     for (before, key, after, active) in [
         ("",      'T', "rain",   is_train),
         ("Confi", 'G', "",       is_config),
         ("",      'H', "istory", is_calendar),
         ("",      'A', "bout",   is_about),
-        ("",      'E', "xit",    false),
+        ("",      'E', "xit",    is_exit),
     ] {
         let (ks, rs) = if active { (active_key_style, active_style) } else { (key_style, normal_style) };
         if !before.is_empty() {
@@ -972,6 +984,56 @@ fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         Paragraph::new(lines).alignment(Alignment::Center),
         result_rect,
     );
+}
+
+fn render_exit(frame: &mut ratatui::Frame, area: Rect) {
+    // Load today's stats fresh
+    let stats = load_history_stats();
+    let (year, month) = today_ym();
+    // today_ym gives year/month; we need today's full date key
+    // Compute today's day from system time
+    let today_day = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let (_, _, d) = days_to_ymd(secs / 86400);
+        d as u32
+    };
+    let date_key = format!("{:04}-{:02}-{:02}", year, month, today_day);
+
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Today's training",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+
+    if let Some(&(sessions, avg_wpm, words, chars)) = stats.get(&date_key) {
+        let row = |label: &str, value: String| -> Line<'static> {
+            Line::from(vec![
+                Span::styled(format!("  {:<16}", label), Style::default().fg(Color::DarkGray)),
+                Span::styled(value, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            ])
+        };
+        lines.push(row("sessions", sessions.to_string()));
+        lines.push(row("avg WPM", format!("{:.1}", avg_wpm)));
+        lines.push(row("total words", words.to_string()));
+        lines.push(row("total chars", chars.to_string()));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  No sessions today yet.",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Press Enter or Esc to quit",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_about(frame: &mut ratatui::Frame, area: Rect) {
