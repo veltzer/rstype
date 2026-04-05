@@ -38,7 +38,37 @@ That patient merit of the unworthy takes, \
 When he himself might his quietus make \
 With a bare bodkin?";
 
-// ── History ───────────────────────────────────────────────────────────────────
+// ── Text fetching ─────────────────────────────────────────────────────────────
+
+fn fetch_text(source: TextSource) -> String {
+    match source {
+        TextSource::Wikipedia => fetch_wikipedia().unwrap_or_else(|| TARGET_TEXT.to_string()),
+        TextSource::WordSalad => TARGET_TEXT.to_string(), // placeholder
+    }
+}
+
+fn fetch_wikipedia() -> Option<String> {
+    let resp = ureq::get("https://en.wikipedia.org/api/rest_v1/page/random/summary")
+        .set("User-Agent", "rstype/1.0 (typing trainer)")
+        .call()
+        .ok()?;
+    let json: serde_json::Value = resp.into_json().ok()?;
+    let extract = json.get("extract")?.as_str()?;
+    // Take the first meaningful paragraph, capped at ~600 chars
+    let para = extract
+        .split('\n')
+        .find(|p| p.len() > 80)
+        .unwrap_or(extract);
+    let trimmed: String = para.chars().take(600).collect();
+    // Snap back to last sentence boundary if we cut mid-sentence
+    if let Some(pos) = trimmed.rfind(|c| c == '.' || c == '?' || c == '!') {
+        Some(trimmed[..=pos].trim().to_string())
+    } else {
+        Some(trimmed.trim().to_string())
+    }
+}
+
+
 
 #[derive(Serialize)]
 struct Keystroke {
@@ -255,9 +285,36 @@ impl TypingMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum TextSource {
+    Wikipedia,
+    WordSalad,
+}
+
+impl TextSource {
+    fn label(self) -> &'static str {
+        match self {
+            TextSource::Wikipedia => "Wikipedia",
+            TextSource::WordSalad => "Word Salad",
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            TextSource::Wikipedia => "Fetch a random Wikipedia article summary.\nRequires an internet connection.",
+            TextSource::WordSalad => "Generate a random sequence of common English words.\nNo internet required. (not yet implemented)",
+        }
+    }
+}
+
+fn default_text_source() -> TextSource { TextSource::Wikipedia }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Config {
     mode: TypingMode,
+    #[serde(default = "default_text_source")]
+    text_source: TextSource,
     #[serde(default = "default_min_cols")]
     min_cols: u16,
     #[serde(default = "default_min_rows")]
@@ -271,6 +328,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             mode: TypingMode::Forward,
+            text_source: default_text_source(),
             min_cols: default_min_cols(),
             min_rows: default_min_rows(),
         }
@@ -340,8 +398,12 @@ struct App {
 
     // navigation
     screen: Screen,
-    /// Selected index on the config screen.
+    /// Which config section is focused: 0 = typing mode, 1 = text source.
+    config_section: usize,
+    /// Selected index within the mode list.
     config_cursor: usize,
+    /// Selected index within the text source list.
+    config_source_cursor: usize,
     // calendar
     calendar_year: i32,
     calendar_month: u32,
@@ -357,9 +419,10 @@ enum TypingState {
 
 impl App {
     fn new(config: Config) -> Self {
+        let target = fetch_text(config.text_source).chars().collect();
         Self {
             config,
-            target: TARGET_TEXT.chars().collect(),
+            target,
             typed: Vec::new(),
             cursor: 0,
             errors: 0,
@@ -369,7 +432,9 @@ impl App {
             wpm: 0.0,
             keystrokes: Vec::new(),
             screen: Screen::Typing,
+            config_section: 0,
             config_cursor: 0,
+            config_source_cursor: 0,
             calendar_year: 0,
             calendar_month: 1,
             calendar_stats: HashMap::new(),
@@ -463,19 +528,29 @@ impl App {
 
     fn on_key_config(&mut self, key: KeyEvent) {
         const MODES: [TypingMode; 5] = [TypingMode::Forward, TypingMode::Stop, TypingMode::Correct, TypingMode::SuddenDeath, TypingMode::Blind];
+        const SOURCES: [TextSource; 2] = [TextSource::Wikipedia, TextSource::WordSalad];
         match key.code {
+            KeyCode::Tab => {
+                // Switch between mode section and source section
+                self.config_section = (self.config_section + 1) % 2;
+            }
             KeyCode::Up => {
-                if self.config_cursor > 0 {
-                    self.config_cursor -= 1;
+                if self.config_section == 0 {
+                    if self.config_cursor > 0 { self.config_cursor -= 1; }
+                } else {
+                    if self.config_source_cursor > 0 { self.config_source_cursor -= 1; }
                 }
             }
             KeyCode::Down => {
-                if self.config_cursor + 1 < MODES.len() {
-                    self.config_cursor += 1;
+                if self.config_section == 0 {
+                    if self.config_cursor + 1 < MODES.len() { self.config_cursor += 1; }
+                } else {
+                    if self.config_source_cursor + 1 < SOURCES.len() { self.config_source_cursor += 1; }
                 }
             }
             KeyCode::Enter => {
                 self.config.mode = MODES[self.config_cursor];
+                self.config.text_source = SOURCES[self.config_source_cursor];
                 save_config(&self.config);
                 self.screen = Screen::Typing;
             }
@@ -580,13 +655,17 @@ impl App {
     }
 
     fn open_config(&mut self) {
-        // Pre-select the current mode
+        self.config_section = 0;
         self.config_cursor = match self.config.mode {
             TypingMode::Forward     => 0,
             TypingMode::Stop        => 1,
             TypingMode::Correct     => 2,
             TypingMode::SuddenDeath => 3,
             TypingMode::Blind       => 4,
+        };
+        self.config_source_cursor = match self.config.text_source {
+            TextSource::Wikipedia => 0,
+            TextSource::WordSalad => 1,
         };
         self.screen = Screen::Config;
     }
@@ -1071,24 +1150,31 @@ fn render_about(frame: &mut ratatui::Frame, area: Rect) {
 
 fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     const MODES: [TypingMode; 5] = [TypingMode::Forward, TypingMode::Stop, TypingMode::Correct, TypingMode::SuddenDeath, TypingMode::Blind];
+    const SOURCES: [TextSource; 2] = [TextSource::Wikipedia, TextSource::WordSalad];
 
-    let mut lines = vec![
+    let section_style = |active: bool| -> Style {
+        if active {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        }
+    };
+
+    let mut lines: Vec<Line> = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "  Select typing mode:",
-            Style::default().fg(Color::White),
+            "  Typing mode  (Tab to switch section, ↑↓ to move, Enter to save)",
+            section_style(app.config_section == 0),
         )),
         Line::from(""),
     ];
 
     for (i, mode) in MODES.iter().enumerate() {
-        let selected = i == app.config_cursor;
+        let selected = app.config_section == 0 && i == app.config_cursor;
         let active = *mode == app.config.mode;
-
         let prefix = if selected { "▶ " } else { "  " };
         let suffix = if active { "  ✓" } else { "" };
         let label = format!("{}{}{}", prefix, mode.label(), suffix);
-
         let style = if selected {
             Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
         } else if active {
@@ -1096,20 +1182,53 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         } else {
             Style::default().fg(Color::DarkGray)
         };
-
         lines.push(Line::from(Span::styled(label, style)));
     }
 
-    // Description of the currently highlighted mode
-    lines.push(Line::from(""));
-    let desc = MODES[app.config_cursor].description();
-    for desc_line in desc.lines() {
-        lines.push(Line::from(Span::styled(
-            format!("  {}", desc_line),
-            Style::default().fg(Color::White),
-        )));
+    if app.config_section == 0 {
+        lines.push(Line::from(""));
+        let desc = MODES[app.config_cursor].description();
+        for desc_line in desc.lines() {
+            lines.push(Line::from(Span::styled(
+                format!("  {}", desc_line),
+                Style::default().fg(Color::White),
+            )));
+        }
     }
+
     lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Text source",
+        section_style(app.config_section == 1),
+    )));
+    lines.push(Line::from(""));
+
+    for (i, src) in SOURCES.iter().enumerate() {
+        let selected = app.config_section == 1 && i == app.config_source_cursor;
+        let active = *src == app.config.text_source;
+        let prefix = if selected { "▶ " } else { "  " };
+        let suffix = if active { "  ✓" } else { "" };
+        let label = format!("{}{}{}", prefix, src.label(), suffix);
+        let style = if selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else if active {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        lines.push(Line::from(Span::styled(label, style)));
+    }
+
+    if app.config_section == 1 {
+        lines.push(Line::from(""));
+        let desc = SOURCES[app.config_source_cursor].description();
+        for desc_line in desc.lines() {
+            lines.push(Line::from(Span::styled(
+                format!("  {}", desc_line),
+                Style::default().fg(Color::White),
+            )));
+        }
+    }
 
     frame.render_widget(Paragraph::new(lines), area);
 }
