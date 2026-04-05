@@ -307,7 +307,7 @@ fn save_config(cfg: &Config) {
 
 // ── App state ─────────────────────────────────────────────────────────────────
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 enum Screen {
     Typing,
     Config,
