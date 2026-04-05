@@ -408,17 +408,20 @@ impl App {
             }
         }
 
-        // Left/Right arrows cycle through toolbar screens on all screens
-        {
+        // Left/Right arrows cycle through toolbar screens on all screens,
+        // but not while a typing session is in progress
+        let typing_in_progress = self.screen == Screen::Typing
+            && self.typing_state == TypingState::Typing;
+        if !typing_in_progress {
             const ORDER: [Screen; 4] = [Screen::Typing, Screen::Config, Screen::Calendar, Screen::About];
             let cur = ORDER.iter().position(|s| s == &self.screen).unwrap_or(0);
-            if key.code == KeyCode::Left && self.screen != Screen::Typing {
+            if key.code == KeyCode::Left {
                 self.screen = ORDER[(cur + ORDER.len() - 1) % ORDER.len()].clone();
                 if self.screen == Screen::Calendar { self.open_calendar(); }
                 if self.screen == Screen::Config   { self.open_config(); }
                 return false;
             }
-            if key.code == KeyCode::Right && self.screen != Screen::Typing {
+            if key.code == KeyCode::Right {
                 self.screen = ORDER[(cur + 1) % ORDER.len()].clone();
                 if self.screen == Screen::Calendar { self.open_calendar(); }
                 if self.screen == Screen::Config   { self.open_config(); }
