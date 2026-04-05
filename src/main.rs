@@ -606,6 +606,14 @@ impl App {
                     self.screen = Screen::About;
                     return false;
                 }
+                KeyCode::Char('n') => {
+                    // Fetch new text — only when not mid-session and not already fetching
+                    if !self.fetching && self.typing_state != TypingState::Typing {
+                        self.screen = Screen::Typing;
+                        self.fetch_new_text();
+                    }
+                    return false;
+                }
                 _ => {}
             }
         }
@@ -1088,6 +1096,21 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             );
         }
     }
+
+    // ── Ctrl+N hint (shown always except while fetching) ──────────────────
+    let mid_session = app.typing_state == TypingState::Typing;
+    let key_style = if mid_session {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+    };
+    let hint = Line::from(vec![
+        Span::styled("  ^", Style::default().fg(Color::DarkGray)),
+        Span::styled("N", key_style),
+        Span::styled(" new text", Style::default().fg(Color::DarkGray)),
+    ]);
+    let hint_y = area.bottom().saturating_sub(1);
+    frame.render_widget(Paragraph::new(hint), Rect::new(area.x, hint_y, area.width, 1));
 }
 
 fn render_calendar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
