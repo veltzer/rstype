@@ -40,16 +40,18 @@ With a bare bodkin?";
 
 // ── Text fetching ─────────────────────────────────────────────────────────────
 
-fn fetch_text(source: TextSource) -> String {
+fn fetch_text(source: TextSource, length: TextLength) -> String {
     match source {
-        TextSource::Wikipedia => fetch_wikipedia_ascii().unwrap_or_else(|| TARGET_TEXT.to_string()),
+        TextSource::Wikipedia => fetch_wikipedia_ascii(length).unwrap_or_else(|| TARGET_TEXT.to_string()),
         TextSource::WordSalad => TARGET_TEXT.to_string(), // placeholder
     }
 }
 
 /// Fetch up to 20 random articles in one request, return the first with
-/// only typeable ASCII characters.
-fn fetch_wikipedia_ascii() -> Option<String> {
+/// only typeable ASCII characters and within the requested length range.
+fn fetch_wikipedia_ascii(length: TextLength) -> Option<String> {
+    let min = length.min_chars();
+    let max = length.max_chars();
     let resp = ureq::get("https://en.wikipedia.org/w/api.php")
         .query("action", "query")
         .query("generator", "random")
@@ -68,14 +70,21 @@ fn fetch_wikipedia_ascii() -> Option<String> {
     for page in pages.values() {
         let extract = page.get("extract")?.as_str().unwrap_or("");
         for para in extract.split('\n') {
-            if para.len() <= 80 { continue; }
-            let trimmed: String = para.chars().take(600).collect();
-            let candidate = if let Some(pos) = trimmed.rfind(|c| c == '.' || c == '?' || c == '!') {
-                trimmed[..=pos].trim().to_string()
+            if para.len() < min { continue; }
+            let trimmed: String = para.chars().take(max).collect();
+            let candidate = if trimmed.len() >= max {
+                // Snap to last sentence boundary
+                if let Some(pos) = trimmed.rfind(|c| c == '.' || c == '?' || c == '!') {
+                    trimmed[..=pos].trim().to_string()
+                } else {
+                    trimmed.trim().to_string()
+                }
             } else {
                 trimmed.trim().to_string()
             };
-            if !candidate.is_empty() && candidate.chars().all(|c| c.is_ascii() && c >= ' ' && c != '\x7f') {
+            if candidate.len() >= min
+                && candidate.chars().all(|c| c.is_ascii() && c >= ' ' && c != '\x7f')
+            {
                 return Some(candidate);
             }
         }
@@ -322,11 +331,62 @@ impl TextSource {
 
 fn default_text_source() -> TextSource { TextSource::Wikipedia }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TextLength {
+    OneLine,
+    ShortParagraph,
+    Paragraph,
+    LongParagraph,
+}
+
+impl TextLength {
+    fn label(self) -> &'static str {
+        match self {
+            TextLength::OneLine        => "One line",
+            TextLength::ShortParagraph => "Short paragraph",
+            TextLength::Paragraph      => "Paragraph",
+            TextLength::LongParagraph  => "Long paragraph",
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            TextLength::OneLine        => "Around 60 characters — a single sentence.",
+            TextLength::ShortParagraph => "Around 150 characters — two or three sentences.",
+            TextLength::Paragraph      => "Around 300 characters — a full paragraph.",
+            TextLength::LongParagraph  => "Around 600 characters — an extended passage.",
+        }
+    }
+
+    fn max_chars(self) -> usize {
+        match self {
+            TextLength::OneLine        => 70,
+            TextLength::ShortParagraph => 160,
+            TextLength::Paragraph      => 320,
+            TextLength::LongParagraph  => 640,
+        }
+    }
+
+    fn min_chars(self) -> usize {
+        match self {
+            TextLength::OneLine        => 30,
+            TextLength::ShortParagraph => 80,
+            TextLength::Paragraph      => 160,
+            TextLength::LongParagraph  => 320,
+        }
+    }
+}
+
+fn default_text_length() -> TextLength { TextLength::Paragraph }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Config {
     mode: TypingMode,
     #[serde(default = "default_text_source")]
     text_source: TextSource,
+    #[serde(default = "default_text_length")]
+    text_length: TextLength,
     #[serde(default = "default_min_cols")]
     min_cols: u16,
     #[serde(default = "default_min_rows")]
@@ -341,6 +401,7 @@ impl Default for Config {
         Self {
             mode: TypingMode::Forward,
             text_source: default_text_source(),
+            text_length: default_text_length(),
             min_cols: default_min_cols(),
             min_rows: default_min_rows(),
         }
@@ -419,6 +480,8 @@ struct App {
     config_cursor: usize,
     /// Selected index within the text source list.
     config_source_cursor: usize,
+    /// Selected index within the text length list.
+    config_length_cursor: usize,
     // calendar
     calendar_year: i32,
     calendar_month: u32,
@@ -439,9 +502,10 @@ impl App {
             (false, None, TARGET_TEXT.chars().collect())
         } else {
             let source = config.text_source;
+            let length = config.text_length;
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                let text = fetch_text(source);
+                let text = fetch_text(source, length);
                 let _ = tx.send(text);
             });
             (true, Some(rx), Vec::new())
@@ -463,10 +527,33 @@ impl App {
             config_section: 0,
             config_cursor: 0,
             config_source_cursor: 0,
+            config_length_cursor: 0,
             calendar_year: 0,
             calendar_month: 1,
             calendar_stats: HashMap::new(),
         }
+    }
+
+    /// Kick off a fresh background text fetch without resetting the whole app.
+    fn fetch_new_text(&mut self) {
+        let source = self.config.text_source;
+        let length = self.config.text_length;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let text = fetch_text(source, length);
+            let _ = tx.send(text);
+        });
+        self.target = Vec::new();
+        self.typed = Vec::new();
+        self.cursor = 0;
+        self.errors = 0;
+        self.error_flash = false;
+        self.typing_state = TypingState::Waiting;
+        self.start_time = None;
+        self.wpm = 0.0;
+        self.keystrokes = Vec::new();
+        self.fetching = true;
+        self.fetch_rx = Some(rx);
     }
 
     /// Poll the background fetch channel; call each frame.
@@ -574,28 +661,29 @@ impl App {
     fn on_key_config(&mut self, key: KeyEvent) {
         const MODES: [TypingMode; 5] = [TypingMode::Forward, TypingMode::Stop, TypingMode::Correct, TypingMode::SuddenDeath, TypingMode::Blind];
         const SOURCES: [TextSource; 2] = [TextSource::Wikipedia, TextSource::WordSalad];
+        const LENGTHS: [TextLength; 4] = [TextLength::OneLine, TextLength::ShortParagraph, TextLength::Paragraph, TextLength::LongParagraph];
         match key.code {
             KeyCode::Tab => {
-                // Switch between mode section and source section
-                self.config_section = (self.config_section + 1) % 2;
+                self.config_section = (self.config_section + 1) % 3;
             }
             KeyCode::Up => {
-                if self.config_section == 0 {
-                    if self.config_cursor > 0 { self.config_cursor -= 1; }
-                } else {
-                    if self.config_source_cursor > 0 { self.config_source_cursor -= 1; }
+                match self.config_section {
+                    0 => { if self.config_cursor > 0 { self.config_cursor -= 1; } }
+                    1 => { if self.config_source_cursor > 0 { self.config_source_cursor -= 1; } }
+                    _ => { if self.config_length_cursor > 0 { self.config_length_cursor -= 1; } }
                 }
             }
             KeyCode::Down => {
-                if self.config_section == 0 {
-                    if self.config_cursor + 1 < MODES.len() { self.config_cursor += 1; }
-                } else {
-                    if self.config_source_cursor + 1 < SOURCES.len() { self.config_source_cursor += 1; }
+                match self.config_section {
+                    0 => { if self.config_cursor + 1 < MODES.len() { self.config_cursor += 1; } }
+                    1 => { if self.config_source_cursor + 1 < SOURCES.len() { self.config_source_cursor += 1; } }
+                    _ => { if self.config_length_cursor + 1 < LENGTHS.len() { self.config_length_cursor += 1; } }
                 }
             }
             KeyCode::Enter => {
                 self.config.mode = MODES[self.config_cursor];
                 self.config.text_source = SOURCES[self.config_source_cursor];
+                self.config.text_length = LENGTHS[self.config_length_cursor];
                 save_config(&self.config);
                 self.screen = Screen::Typing;
             }
@@ -607,13 +695,19 @@ impl App {
         match self.typing_state {
             TypingState::Done => {
                 match key.code {
+                    KeyCode::Char('n') => self.fetch_new_text(),
                     KeyCode::Char('r') | KeyCode::Enter | KeyCode::Char(' ') => self.restart(),
                     _ => {}
                 }
             }
             TypingState::Waiting | TypingState::Typing => {
-                // Start timer on first keypress
+                // n fetches a new text (only while waiting, not mid-session)
                 if self.typing_state == TypingState::Waiting {
+                    if key.code == KeyCode::Char('n') {
+                        self.fetch_new_text();
+                        return;
+                    }
+                    // Start timer on first keypress
                     if matches!(key.code, KeyCode::Char(_) | KeyCode::Backspace) {
                         self.typing_state = TypingState::Typing;
                         self.start_time = Some(Instant::now());
@@ -711,6 +805,12 @@ impl App {
         self.config_source_cursor = match self.config.text_source {
             TextSource::Wikipedia => 0,
             TextSource::WordSalad => 1,
+        };
+        self.config_length_cursor = match self.config.text_length {
+            TextLength::OneLine        => 0,
+            TextLength::ShortParagraph => 1,
+            TextLength::Paragraph      => 2,
+            TextLength::LongParagraph  => 3,
         };
         self.screen = Screen::Config;
     }
@@ -1108,7 +1208,7 @@ fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         ]),
         Line::from(""),
         Line::from(Span::styled(
-            "Enter / Space / R to restart",
+            "Enter / Space / R  retry same text     N  new text",
             Style::default().fg(Color::DarkGray),
         )),
     ];
@@ -1205,6 +1305,7 @@ fn render_about(frame: &mut ratatui::Frame, area: Rect) {
 fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     const MODES: [TypingMode; 5] = [TypingMode::Forward, TypingMode::Stop, TypingMode::Correct, TypingMode::SuddenDeath, TypingMode::Blind];
     const SOURCES: [TextSource; 2] = [TextSource::Wikipedia, TextSource::WordSalad];
+    const LENGTHS: [TextLength; 4] = [TextLength::OneLine, TextLength::ShortParagraph, TextLength::Paragraph, TextLength::LongParagraph];
 
     let section_style = |active: bool| -> Style {
         if active {
@@ -1282,6 +1383,37 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                 Style::default().fg(Color::White),
             )));
         }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Text length",
+        section_style(app.config_section == 2),
+    )));
+    lines.push(Line::from(""));
+
+    for (i, len) in LENGTHS.iter().enumerate() {
+        let selected = app.config_section == 2 && i == app.config_length_cursor;
+        let active = *len == app.config.text_length;
+        let prefix = if selected { "▶ " } else { "  " };
+        let suffix = if active { "  ✓" } else { "" };
+        let label = format!("{}{}{}", prefix, len.label(), suffix);
+        let style = if selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else if active {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        lines.push(Line::from(Span::styled(label, style)));
+    }
+
+    if app.config_section == 2 {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("  {}", LENGTHS[app.config_length_cursor].description()),
+            Style::default().fg(Color::White),
+        )));
     }
 
     frame.render_widget(Paragraph::new(lines), area);
