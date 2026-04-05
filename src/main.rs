@@ -307,6 +307,7 @@ enum Screen {
     Typing,
     Config,
     Calendar,
+    About,
 }
 
 struct App {
@@ -394,14 +395,18 @@ impl App {
                     self.open_calendar();
                     return false;
                 }
+                KeyCode::Char('a') => {
+                    self.screen = Screen::About;
+                    return false;
+                }
                 _ => {}
             }
         }
 
-        // Esc goes back to train screen (from config/calendar), or quits if already on train
+        // Esc goes back to train screen (from any non-typing screen), or quits if on train
         if key.code == KeyCode::Esc {
             match self.screen {
-                Screen::Config | Screen::Calendar => {
+                Screen::Config | Screen::Calendar | Screen::About => {
                     self.screen = Screen::Typing;
                     return false;
                 }
@@ -410,9 +415,10 @@ impl App {
         }
 
         match self.screen {
-            Screen::Config => self.on_key_config(key),
-            Screen::Typing => self.on_key_typing(key),
+            Screen::Config   => self.on_key_config(key),
+            Screen::Typing   => self.on_key_typing(key),
             Screen::Calendar => self.on_key_calendar(key),
+            Screen::About    => {}  // no interaction needed
         }
         false
     }
@@ -625,9 +631,10 @@ fn render(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> i
         );
 
         match app.screen {
-            Screen::Config => render_config(frame, body_rect, app),
+            Screen::Config   => render_config(frame, body_rect, app),
             Screen::Calendar => render_calendar(frame, indented, app),
-            Screen::Typing => match app.typing_state {
+            Screen::About    => render_about(frame, indented),
+            Screen::Typing   => match app.typing_state {
                 TypingState::Done => render_done(frame, body_rect, app),
                 _ => render_typing(frame, indented, app),
             },
@@ -646,6 +653,7 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let is_train    = app.screen == Screen::Typing;
     let is_config   = app.screen == Screen::Config;
     let is_calendar = app.screen == Screen::Calendar;
+    let is_about    = app.screen == Screen::About;
 
     let mut spans = vec![Span::styled("  ", normal_style)];
 
@@ -654,6 +662,7 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         ("",      'T', "rain",   is_train),
         ("Confi", 'G', "",       is_config),
         ("",      'H', "istory", is_calendar),
+        ("",      'A', "bout",   is_about),
         ("",      'E', "xit",    false),
     ] {
         let (ks, rs) = if active { (active_key_style, active_style) } else { (key_style, normal_style) };
@@ -668,8 +677,8 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     }
 
     // Right-align "rstype by Mark Veltzer" in the remaining space
-    // Left side width: "  " + "Train  " + "ConfiG  " + "History  " + "Exit  " = 2+8+8+9+6 = 33
-    let left_width: u16 = 34;
+    // Left side: "  " + "Train  " + "ConfiG  " + "History  " + "About  " + "Exit  " = 2+8+8+9+8+6 = 41
+    let left_width: u16 = 41;
     let title = "rstype by Mark Veltzer  ";
     let title_len = title.len() as u16;
     let pad = area.width.saturating_sub(left_width + title_len);
@@ -929,6 +938,38 @@ fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         Paragraph::new(lines).alignment(Alignment::Center),
         result_rect,
     );
+}
+
+fn render_about(frame: &mut ratatui::Frame, area: Rect) {
+    let w = |label: &str, value: &str, color: Color| -> Line<'static> {
+        Line::from(vec![
+            Span::styled(format!("  {:<18}", label), Style::default().fg(Color::DarkGray)),
+            Span::styled(value.to_string(), Style::default().fg(color).add_modifier(Modifier::BOLD)),
+        ])
+    };
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  rstype — terminal typing trainer",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "  by Mark Veltzer <mark.veltzer@gmail.com>",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        w("version",         env!("CARGO_PKG_VERSION"),  Color::Yellow),
+        w("git describe",    env!("GIT_DESCRIBE"),        Color::Yellow),
+        w("git branch",      env!("GIT_BRANCH"),          Color::Yellow),
+        w("git sha",         env!("GIT_SHA"),              Color::Yellow),
+        w("dirty",           env!("GIT_DIRTY"),            Color::Yellow),
+        w("built",           env!("BUILD_TIMESTAMP"),      Color::Yellow),
+        w("rustc",           env!("RUSTC_SEMVER"),         Color::Yellow),
+        w("rust edition",    env!("RUST_EDITION"),         Color::Yellow),
+    ];
+
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
