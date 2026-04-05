@@ -66,6 +66,7 @@ fn history_path() -> PathBuf {
 }
 
 fn save_session(session: &Session) {
+    if cfg!(test) { return; }
     let path = history_path();
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
