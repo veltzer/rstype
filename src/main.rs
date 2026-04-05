@@ -185,12 +185,12 @@ fn today_ym() -> (i32, u32) {
 }
 
 /// Parse JSONL history and return a map of "YYYY-MM-DD" -> (session_count, avg_wpm).
-fn load_history_stats() -> HashMap<String, (usize, f64)> {
-    let mut map: HashMap<String, (usize, f64)> = HashMap::new();
+// DayStats: (session_count, avg_wpm, total_words, total_chars)
+fn load_history_stats() -> HashMap<String, (usize, f64, usize, usize)> {
+    let mut map: HashMap<String, (usize, f64, usize, usize)> = HashMap::new();
     let path = history_path();
     let Ok(content) = fs::read_to_string(&path) else { return map; };
     for line in content.lines() {
-        // Just extract "timestamp" and "wpm" fields cheaply
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
             if let (Some(ts), Some(wpm)) = (
                 val.get("timestamp").and_then(|v| v.as_str()),
@@ -198,9 +198,14 @@ fn load_history_stats() -> HashMap<String, (usize, f64)> {
             ) {
                 let date_key = ts.get(..10).unwrap_or("").to_string();
                 if date_key.len() == 10 {
-                    let entry = map.entry(date_key).or_insert((0, 0.0));
+                    let text = val.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                    let chars = text.chars().count();
+                    let words = text.split_whitespace().count();
+                    let entry = map.entry(date_key).or_insert((0, 0.0, 0, 0));
                     entry.0 += 1;
                     entry.1 += wpm;
+                    entry.2 += words;
+                    entry.3 += chars;
                 }
             }
         }
@@ -338,7 +343,7 @@ struct App {
     // calendar
     calendar_year: i32,
     calendar_month: u32,
-    calendar_stats: HashMap<String, (usize, f64)>,
+    calendar_stats: HashMap<String, (usize, f64, usize, usize)>,
 }
 
 #[derive(PartialEq)]
@@ -400,6 +405,24 @@ impl App {
                     return false;
                 }
                 _ => {}
+            }
+        }
+
+        // Left/Right arrows cycle through toolbar screens on all screens
+        {
+            const ORDER: [Screen; 4] = [Screen::Typing, Screen::Config, Screen::Calendar, Screen::About];
+            let cur = ORDER.iter().position(|s| s == &self.screen).unwrap_or(0);
+            if key.code == KeyCode::Left && self.screen != Screen::Typing {
+                self.screen = ORDER[(cur + ORDER.len() - 1) % ORDER.len()].clone();
+                if self.screen == Screen::Calendar { self.open_calendar(); }
+                if self.screen == Screen::Config   { self.open_config(); }
+                return false;
+            }
+            if key.code == KeyCode::Right && self.screen != Screen::Typing {
+                self.screen = ORDER[(cur + 1) % ORDER.len()].clone();
+                if self.screen == Screen::Calendar { self.open_calendar(); }
+                if self.screen == Screen::Config   { self.open_config(); }
+                return false;
             }
         }
 
@@ -563,7 +586,7 @@ impl App {
 
     fn on_key_calendar(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Left => {
+            KeyCode::Char(',') => {
                 if self.calendar_month == 1 {
                     self.calendar_month = 12;
                     self.calendar_year -= 1;
@@ -571,7 +594,7 @@ impl App {
                     self.calendar_month -= 1;
                 }
             }
-            KeyCode::Right => {
+            KeyCode::Char('.') => {
                 if self.calendar_month == 12 {
                     self.calendar_month = 1;
                     self.calendar_year += 1;
@@ -841,6 +864,7 @@ fn render_calendar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let total_slots = 6 * 7;
     let mut day_spans: Vec<Span> = Vec::new();
     let mut stat_spans: Vec<Span> = Vec::new();
+    let mut wc_spans: Vec<Span> = Vec::new();
 
     for slot in 0..total_slots {
         let col = slot % 7;
@@ -849,13 +873,14 @@ fn render_calendar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         if day_num < 1 || day_num > num_days as i32 {
             day_spans.push(Span::raw(format!("{:<CELL$}", "")));
             stat_spans.push(Span::raw(format!("{:<CELL$}", "")));
+            wc_spans.push(Span::raw(format!("{:<CELL$}", "")));
         } else {
             let d = day_num as u32;
             let date_key = format!("{:04}-{:02}-{:02}", year, month, d);
-            let stat_text = if let Some(&(count, avg)) = app.calendar_stats.get(&date_key) {
-                format!("{}s {:.0}w", count, avg)
+            let (stat_text, wc_text) = if let Some(&(count, avg, words, chars)) = app.calendar_stats.get(&date_key) {
+                (format!("{}s {:.0}wpm", count, avg), format!("{}w {}c", words, chars))
             } else {
-                String::new()
+                (String::new(), String::new())
             };
             day_spans.push(Span::styled(
                 format!("{:<CELL$}", d),
@@ -865,19 +890,25 @@ fn render_calendar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                 format!("{:<CELL$}", stat_text),
                 Style::default().fg(Color::Cyan),
             ));
+            wc_spans.push(Span::styled(
+                format!("{:<CELL$}", wc_text),
+                Style::default().fg(Color::Yellow),
+            ));
         }
 
         // End of week — flush
         if col == 6 {
             lines.push(Line::from(day_spans.clone()));
             lines.push(Line::from(stat_spans.clone()));
+            lines.push(Line::from(wc_spans.clone()));
             lines.push(Line::from(""));
             day_spans.clear();
             stat_spans.clear();
+            wc_spans.clear();
         }
     }
 
-    let title = format!("  {} {}   ← prev   → next", month_name(month), year);
+    let title = format!("  {} {}   , prev   . next", month_name(month), year);
     let mut all_lines = vec![
         Line::from(""),
         Line::from(Span::styled(title, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
