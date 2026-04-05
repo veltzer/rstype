@@ -42,34 +42,46 @@ With a bare bodkin?";
 
 fn fetch_text(source: TextSource) -> String {
     match source {
-        TextSource::Wikipedia => fetch_wikipedia().unwrap_or_else(|| TARGET_TEXT.to_string()),
+        TextSource::Wikipedia => fetch_wikipedia_ascii().unwrap_or_else(|| TARGET_TEXT.to_string()),
         TextSource::WordSalad => TARGET_TEXT.to_string(), // placeholder
     }
 }
 
-fn fetch_wikipedia() -> Option<String> {
-    let resp = ureq::get("https://en.wikipedia.org/api/rest_v1/page/random/summary")
+/// Fetch up to 20 random articles in one request, return the first with
+/// only typeable ASCII characters.
+fn fetch_wikipedia_ascii() -> Option<String> {
+    let resp = ureq::get("https://en.wikipedia.org/w/api.php")
+        .query("action", "query")
+        .query("generator", "random")
+        .query("grnnamespace", "0")
+        .query("grnlimit", "20")
+        .query("prop", "extracts")
+        .query("exintro", "true")
+        .query("explaintext", "true")
+        .query("format", "json")
         .set("User-Agent", "rstype/1.0 (typing trainer)")
         .call()
         .ok()?;
     let json: serde_json::Value = resp.into_json().ok()?;
-    let extract = json.get("extract")?.as_str()?;
-    // Take the first meaningful paragraph, capped at ~600 chars
-    let para = extract
-        .split('\n')
-        .find(|p| p.len() > 80)
-        .unwrap_or(extract);
-    let trimmed: String = para.chars().take(600).collect();
-    // Snap back to last sentence boundary if we cut mid-sentence
-    if let Some(pos) = trimmed.rfind(|c| c == '.' || c == '?' || c == '!') {
-        Some(trimmed[..=pos].trim().to_string())
-    } else {
-        Some(trimmed.trim().to_string())
+    let pages = json.get("query")?.get("pages")?.as_object()?;
+
+    for page in pages.values() {
+        let extract = page.get("extract")?.as_str().unwrap_or("");
+        for para in extract.split('\n') {
+            if para.len() <= 80 { continue; }
+            let trimmed: String = para.chars().take(600).collect();
+            let candidate = if let Some(pos) = trimmed.rfind(|c| c == '.' || c == '?' || c == '!') {
+                trimmed[..=pos].trim().to_string()
+            } else {
+                trimmed.trim().to_string()
+            };
+            if !candidate.is_empty() && candidate.chars().all(|c| c.is_ascii() && c >= ' ' && c != '\x7f') {
+                return Some(candidate);
+            }
+        }
     }
+    None
 }
-
-
-
 #[derive(Serialize)]
 struct Keystroke {
     typed: String,
