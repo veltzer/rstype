@@ -307,7 +307,7 @@ fn save_config(cfg: &Config) {
 
 // ── App state ─────────────────────────────────────────────────────────────────
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 enum Screen {
     Typing,
     Config,
@@ -346,7 +346,7 @@ struct App {
     calendar_stats: HashMap<String, (usize, f64, usize, usize)>,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 enum TypingState {
     Waiting,
     Typing,
@@ -1091,4 +1091,230 @@ fn main() -> io::Result<()> {
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
     Ok(())
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    fn ctrl(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    // ── Calendar helpers ──────────────────────────────────────────────────
+
+    #[test]
+    fn leap_year_divisible_by_4() {
+        assert!(is_leap_year(2024));
+    }
+
+    #[test]
+    fn leap_year_century_not_leap() {
+        assert!(!is_leap_year(1900));
+    }
+
+    #[test]
+    fn leap_year_400_is_leap() {
+        assert!(is_leap_year(2000));
+    }
+
+    #[test]
+    fn days_in_february_leap() {
+        assert_eq!(days_in_month_cal(2024, 2), 29);
+    }
+
+    #[test]
+    fn days_in_february_non_leap() {
+        assert_eq!(days_in_month_cal(2023, 2), 28);
+    }
+
+    #[test]
+    fn days_in_month_30_and_31() {
+        assert_eq!(days_in_month_cal(2024, 4), 30);  // April
+        assert_eq!(days_in_month_cal(2024, 1), 31);  // January
+        assert_eq!(days_in_month_cal(2024, 12), 31); // December
+    }
+
+    #[test]
+    fn first_weekday_known_date() {
+        // 2024-01-01 was a Monday (0)
+        assert_eq!(first_weekday_of_month(2024, 1), 0);
+        // 2024-04-01 was a Monday (0)
+        assert_eq!(first_weekday_of_month(2024, 4), 0);
+        // 2024-03-01 was a Friday (4)
+        assert_eq!(first_weekday_of_month(2024, 3), 4);
+    }
+
+    #[test]
+    fn days_to_ymd_epoch() {
+        // Day 0 = 1970-01-01
+        assert_eq!(days_to_ymd(0), (1970, 1, 1));
+    }
+
+    #[test]
+    fn days_to_ymd_known() {
+        // 2024-01-01: days since epoch = 19723
+        assert_eq!(days_to_ymd(19723), (2024, 1, 1));
+    }
+
+    // ── W3C key names ─────────────────────────────────────────────────────
+
+    #[test]
+    fn w3c_regular_char() {
+        assert_eq!(keycode_to_w3c(KeyCode::Char('a')), "a");
+    }
+
+    #[test]
+    fn w3c_space() {
+        assert_eq!(keycode_to_w3c(KeyCode::Char(' ')), "Space");
+    }
+
+    #[test]
+    fn w3c_backspace() {
+        assert_eq!(keycode_to_w3c(KeyCode::Backspace), "Backspace");
+    }
+
+    #[test]
+    fn w3c_enter() {
+        assert_eq!(keycode_to_w3c(KeyCode::Enter), "Enter");
+    }
+
+    // ── TypingMode ────────────────────────────────────────────────────────
+
+    #[test]
+    fn mode_labels_distinct() {
+        let labels: Vec<_> = [
+            TypingMode::Forward, TypingMode::Stop, TypingMode::Correct,
+            TypingMode::SuddenDeath, TypingMode::Blind,
+        ].iter().map(|m| m.label()).collect();
+        let unique: std::collections::HashSet<_> = labels.iter().collect();
+        assert_eq!(labels.len(), unique.len());
+    }
+
+    #[test]
+    fn mode_descriptions_non_empty() {
+        for m in [TypingMode::Forward, TypingMode::Stop, TypingMode::Correct,
+                  TypingMode::SuddenDeath, TypingMode::Blind] {
+            assert!(!m.description().is_empty());
+        }
+    }
+
+    // ── App typing logic ──────────────────────────────────────────────────
+
+    fn app_with_text(text: &str, mode: TypingMode) -> App {
+        let mut config = Config::default();
+        config.mode = mode;
+        let mut app = App::new(config);
+        app.target = text.chars().collect();
+        app.typed = Vec::new();
+        app.cursor = 0;
+        app.errors = 0;
+        app
+    }
+
+    #[test]
+    fn forward_mode_correct_key_advances() {
+        let mut app = app_with_text("ab", TypingMode::Forward);
+        app.on_key(key(KeyCode::Char('a')));
+        assert_eq!(app.cursor, 1);
+        assert_eq!(app.errors, 0);
+    }
+
+    #[test]
+    fn forward_mode_wrong_key_still_advances() {
+        let mut app = app_with_text("ab", TypingMode::Forward);
+        app.on_key(key(KeyCode::Char('x')));
+        assert_eq!(app.cursor, 1);
+        assert_eq!(app.errors, 1);
+    }
+
+    #[test]
+    fn stop_mode_wrong_key_does_not_advance() {
+        let mut app = app_with_text("ab", TypingMode::Stop);
+        app.on_key(key(KeyCode::Char('x')));
+        assert_eq!(app.cursor, 0);
+        assert_eq!(app.errors, 1);
+    }
+
+    #[test]
+    fn stop_mode_correct_key_advances() {
+        let mut app = app_with_text("ab", TypingMode::Stop);
+        app.on_key(key(KeyCode::Char('a')));
+        assert_eq!(app.cursor, 1);
+        assert_eq!(app.errors, 0);
+    }
+
+    #[test]
+    fn correct_mode_cannot_finish_with_errors() {
+        let mut app = app_with_text("ab", TypingMode::Correct);
+        app.on_key(key(KeyCode::Char('x'))); // wrong
+        app.on_key(key(KeyCode::Char('b'))); // reaches end but first char wrong
+        assert_ne!(app.typing_state, TypingState::Done);
+    }
+
+    #[test]
+    fn correct_mode_finishes_when_all_correct() {
+        let mut app = app_with_text("ab", TypingMode::Correct);
+        app.on_key(key(KeyCode::Char('x'))); // wrong
+        app.on_key(key(KeyCode::Backspace));  // go back
+        app.on_key(key(KeyCode::Char('a'))); // correct
+        app.on_key(key(KeyCode::Char('b'))); // correct
+        assert_eq!(app.typing_state, TypingState::Done);
+    }
+
+    #[test]
+    fn sudden_death_resets_on_wrong_key() {
+        let mut app = app_with_text("abc", TypingMode::SuddenDeath);
+        app.on_key(key(KeyCode::Char('a'))); // correct
+        app.on_key(key(KeyCode::Char('x'))); // wrong — should reset
+        assert_eq!(app.cursor, 0);
+        assert_eq!(app.typing_state, TypingState::Waiting);
+    }
+
+    #[test]
+    fn backspace_moves_cursor_back() {
+        let mut app = app_with_text("abc", TypingMode::Forward);
+        app.on_key(key(KeyCode::Char('a')));
+        app.on_key(key(KeyCode::Char('b')));
+        app.on_key(key(KeyCode::Backspace));
+        assert_eq!(app.cursor, 1);
+    }
+
+    #[test]
+    fn ctrl_c_quits() {
+        let mut app = app_with_text("abc", TypingMode::Forward);
+        assert!(app.on_key(ctrl(KeyCode::Char('c'))));
+    }
+
+    #[test]
+    fn ctrl_t_goes_to_typing_screen() {
+        let mut app = app_with_text("abc", TypingMode::Forward);
+        app.screen = Screen::Config;
+        app.on_key(ctrl(KeyCode::Char('t')));
+        assert_eq!(app.screen, Screen::Typing);
+    }
+
+    #[test]
+    fn forward_mode_completes_on_last_char() {
+        let mut app = app_with_text("a", TypingMode::Forward);
+        app.on_key(key(KeyCode::Char('a')));
+        assert_eq!(app.typing_state, TypingState::Done);
+    }
 }
