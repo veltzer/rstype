@@ -381,6 +381,9 @@ struct App {
 
     // typing session
     target: Vec<char>,
+    /// Set while background text fetch is in progress.
+    fetching: bool,
+    fetch_rx: Option<std::sync::mpsc::Receiver<String>>,
     /// Correctly / wrongly typed chars so far (only advances in Forward; only
     /// on correct key in Stop).
     typed: Vec<char>,
@@ -419,10 +422,23 @@ enum TypingState {
 
 impl App {
     fn new(config: Config) -> Self {
-        let target = fetch_text(config.text_source).chars().collect();
+        let (fetching, fetch_rx, target) = if cfg!(test) {
+            // Tests don't fetch; use the built-in text synchronously.
+            (false, None, TARGET_TEXT.chars().collect())
+        } else {
+            let source = config.text_source;
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let text = fetch_text(source);
+                let _ = tx.send(text);
+            });
+            (true, Some(rx), Vec::new())
+        };
         Self {
             config,
             target,
+            fetching,
+            fetch_rx,
             typed: Vec::new(),
             cursor: 0,
             errors: 0,
@@ -441,6 +457,17 @@ impl App {
         }
     }
 
+    /// Poll the background fetch channel; call each frame.
+    fn poll_fetch(&mut self) {
+        if let Some(rx) = &self.fetch_rx {
+            if let Ok(text) = rx.try_recv() {
+                self.target = text.chars().collect();
+                self.fetching = false;
+                self.fetch_rx = None;
+            }
+        }
+    }
+
     fn restart(&mut self) {
         let cfg = self.config.clone();
         *self = App::new(cfg);
@@ -449,6 +476,12 @@ impl App {
     /// Returns true if the app should quit.
     fn on_key(&mut self, key: KeyEvent) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+        // Always allow Ctrl+C to quit
+        if ctrl && key.code == KeyCode::Char('c') { return true; }
+
+        // Block all other input while fetching
+        if self.fetching { return false; }
 
         // Global Ctrl shortcuts — work from any screen
         if ctrl {
@@ -820,6 +853,15 @@ fn render_statusbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 }
 
 fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    if app.fetching {
+        let msg = Line::from(Span::styled(
+            "  Fetching text from Wikipedia…",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ));
+        frame.render_widget(Paragraph::new(vec![Line::from(""), msg]), area);
+        return;
+    }
+
     let blind = app.config.mode == TypingMode::Blind;
 
     // ── Word-wrap the target into lines that fit the display width ─────────
@@ -1257,6 +1299,7 @@ fn main() -> io::Result<()> {
     let mut app = App::new(config);
 
     loop {
+        app.poll_fetch();
         render(&mut terminal, &app)?;
 
         if event::poll(Duration::from_millis(50))? {
