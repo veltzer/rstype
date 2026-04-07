@@ -4,6 +4,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use clap::Parser;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
@@ -377,7 +378,7 @@ fn load_history_stats() -> HashMap<String, (usize, f64, usize, usize)> {
     map
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 enum TypingMode {
     /// Cursor advances even on wrong key (errors are shown in red).
@@ -414,7 +415,7 @@ impl TypingMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 enum TextSource {
     Wikipedia,
@@ -439,7 +440,7 @@ impl TextSource {
 
 fn default_text_source() -> TextSource { TextSource::Wikipedia }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 enum TextLength {
     OneLine,
@@ -1621,10 +1622,46 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
+// ── CLI ───────────────────────────────────────────────────────────────────────
+
+#[derive(Parser)]
+#[command(name = "rstype")]
+#[command(about = "Rust based typing trainer")]
+#[command(version)]
+struct Cli {
+    /// Typing mode (overrides config file)
+    #[arg(short, long)]
+    mode: Option<TypingMode>,
+
+    /// Text source (overrides config file)
+    #[arg(short = 's', long)]
+    source: Option<TextSource>,
+
+    /// Text length (overrides config file)
+    #[arg(short = 'l', long)]
+    length: Option<TextLength>,
+
+    /// Minimum terminal columns
+    #[arg(long)]
+    min_cols: Option<u16>,
+
+    /// Minimum terminal rows
+    #[arg(long)]
+    min_rows: Option<u16>,
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() -> io::Result<()> {
-    let config = load_config();
+    let cli = Cli::parse();
+    let mut config = load_config();
+
+    // CLI flags override config-file values
+    if let Some(mode) = cli.mode { config.mode = mode; }
+    if let Some(source) = cli.source { config.text_source = source; }
+    if let Some(length) = cli.length { config.text_length = length; }
+    if let Some(min_cols) = cli.min_cols { config.min_cols = min_cols; }
+    if let Some(min_rows) = cli.min_rows { config.min_rows = min_rows; }
 
     // Check terminal size before entering raw/alternate mode
     let (cols, rows) = crossterm::terminal::size()?;
