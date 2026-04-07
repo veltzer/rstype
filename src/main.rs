@@ -631,6 +631,10 @@ struct App {
     errors: usize,
     /// True for one render cycle after a wrong key in Stop mode (visual flash).
     error_flash: bool,
+    /// Last character key pressed (for keyboard highlight), cleared after render.
+    last_pressed_key: Option<char>,
+    /// Whether the last pressed key was correct.
+    last_pressed_correct: bool,
 
     typing_state: TypingState,
     start_time: Option<Instant>,
@@ -684,6 +688,8 @@ impl App {
             cursor: 0,
             errors: 0,
             error_flash: false,
+            last_pressed_key: None,
+            last_pressed_correct: false,
             typing_state: TypingState::Waiting,
             start_time: None,
             wpm: 0.0,
@@ -713,6 +719,8 @@ impl App {
         self.cursor = 0;
         self.errors = 0;
         self.error_flash = false;
+        self.last_pressed_key = None;
+        self.last_pressed_correct = false;
         self.typing_state = TypingState::Waiting;
         self.start_time = None;
         self.wpm = 0.0;
@@ -920,6 +928,8 @@ impl App {
                                 if ch != expected {
                                     self.errors += 1;
                                 }
+                                self.last_pressed_key = Some(ch);
+                                self.last_pressed_correct = ch == expected;
                             }
                             TypingMode::Stop => {
                                 if ch == expected {
@@ -929,11 +939,15 @@ impl App {
                                     self.errors += 1;
                                     self.error_flash = true;
                                 }
+                                self.last_pressed_key = Some(ch);
+                                self.last_pressed_correct = ch == expected;
                             }
                             TypingMode::SuddenDeath => {
                                 if ch == expected {
                                     self.typed.push(ch);
                                     self.cursor += 1;
+                                    self.last_pressed_key = Some(ch);
+                                    self.last_pressed_correct = true;
                                 } else {
                                     // Reset immediately
                                     self.restart();
@@ -1188,8 +1202,9 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         .position(|&(s, e)| app.cursor >= s && app.cursor < e.max(s + 1))
         .unwrap_or(lines_ranges.len().saturating_sub(1));
 
-    // Reserve rows: progress bar + stats + some margin
-    let reserved = 5u16;
+    // Reserve rows: progress bar + stats + keyboard + hint
+    let keyboard_h = 5u16; // 4 key rows + space bar
+    let reserved = 5u16 + keyboard_h + 1; // progress+blank+stats+blank + keyboard + hint
     let viewport_h = area.height.saturating_sub(reserved) as usize;
     let viewport_h = viewport_h.max(1);
 
@@ -1284,6 +1299,106 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     ]);
     let hint_y = area.bottom().saturating_sub(1);
     frame.render_widget(Paragraph::new(hint), Rect::new(area.x, hint_y, area.width, 1));
+}
+
+// ── On-screen keyboard ───────────────────────────────────────────────────────
+
+/// Map a character to the unshifted base key on a QWERTY keyboard.
+fn base_key(c: char) -> char {
+    match c {
+        '~' => '`', '!' => '1', '@' => '2', '#' => '3', '$' => '4',
+        '%' => '5', '^' => '6', '&' => '7', '*' => '8', '(' => '9',
+        ')' => '0', '_' => '-', '+' => '=',
+        '{' => '[', '}' => ']', '|' => '\\',
+        ':' => ';', '"' => '\'',
+        '<' => ',', '>' => '.', '?' => '/',
+        c => c.to_ascii_lowercase(),
+    }
+}
+
+fn render_keyboard(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    const ROWS: &[&[char]] = &[
+        &['`','1','2','3','4','5','6','7','8','9','0','-','='],
+        &['q','w','e','r','t','y','u','i','o','p','[',']','\\'],
+        &['a','s','d','f','g','h','j','k','l',';','\''],
+        &['z','x','c','v','b','n','m',',','.','/'],
+    ];
+    // Stagger offsets (in characters) to mimic physical keyboard
+    const OFFSETS: &[u16] = &[0, 1, 2, 3];
+    const CELL_W: u16 = 3; // width per key cell
+
+    // Expected next key (mapped to base)
+    let expected_base = if app.cursor < app.target.len() {
+        Some(base_key(app.target[app.cursor]))
+    } else {
+        None
+    };
+
+    // Last pressed key (mapped to base)
+    let pressed_base = app.last_pressed_key.map(base_key);
+
+    let dim_style   = Style::default().fg(Color::DarkGray);
+    let expect_style = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let correct_style = Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD);
+    let wrong_style  = Style::default().fg(Color::Black).bg(Color::Red).add_modifier(Modifier::BOLD);
+
+    for (row_idx, keys) in ROWS.iter().enumerate() {
+        if row_idx as u16 >= area.height { break; }
+        let y = area.y + row_idx as u16;
+        let offset = OFFSETS[row_idx];
+        let mut spans: Vec<Span> = Vec::new();
+        // Indentation
+        if offset > 0 {
+            spans.push(Span::raw(" ".repeat(offset as usize)));
+        }
+        for &k in *keys {
+            let display = if k == '\\' { "\\ ".to_string() } else { format!(" {} ", k) };
+            let style = if pressed_base == Some(k) {
+                if app.last_pressed_correct { correct_style } else { wrong_style }
+            } else if expected_base == Some(k) {
+                expect_style
+            } else {
+                dim_style
+            };
+            spans.push(Span::styled(display, style));
+        }
+        let line_rect = Rect::new(area.x, y, area.width, 1);
+        frame.render_widget(Paragraph::new(Line::from(spans)), line_rect);
+    }
+
+    // Space bar row
+    let space_row = 4u16;
+    if space_row < area.height {
+        let y = area.y + space_row;
+        let style = if pressed_base == Some(' ') {
+            if app.last_pressed_correct { correct_style } else { wrong_style }
+        } else if expected_base == Some(' ') {
+            expect_style
+        } else {
+            dim_style
+        };
+        let mut spans = vec![
+            Span::raw(" ".repeat(OFFSETS[3] as usize + CELL_W as usize * 2)),
+            Span::styled("   space   ", style),
+        ];
+        // Show hand-side labels
+        spans.push(Span::raw("  "));
+        let left_label_style = if app.last_pressed_key.map(|c| hand_for_char(c) == Some(Hand::Left)).unwrap_or(false) {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let right_label_style = if app.last_pressed_key.map(|c| hand_for_char(c) == Some(Hand::Right)).unwrap_or(false) {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        spans.push(Span::styled("L", left_label_style));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled("R", right_label_style));
+        let line_rect = Rect::new(area.x, y, area.width, 1);
+        frame.render_widget(Paragraph::new(Line::from(spans)), line_rect);
+    }
 }
 
 fn render_calendar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
@@ -1949,6 +2064,7 @@ fn main() -> io::Result<()> {
                 }
                 // Clear flash after it's been rendered once
                 app.error_flash = false;
+                app.last_pressed_key = None;
             }
         }
     }
