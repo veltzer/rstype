@@ -16,28 +16,12 @@ use ratatui::widgets::{Block, Paragraph};
 use ratatui::Terminal;
 use serde::{Deserialize, Serialize};
 
-const TARGET_TEXT: &str = "\
-To be, or not to be, that is the question: \
-Whether 'tis nobler in the mind to suffer \
-The slings and arrows of outrageous fortune, \
-Or to take arms against a sea of troubles \
-And by opposing end them. To die—to sleep, \
-No more; and by a sleep to say we end \
-The heart-ache and the thousand natural shocks \
-That flesh is heir to: 'tis a consummation \
-Devoutly to be wish'd. To die, to sleep; \
-To sleep, perchance to dream—ay, there's the rub: \
-For in that sleep of death what dreams may come, \
-When we have shuffled off this mortal coil, \
-Must give us pause—there's the respect \
-That makes calamity of so long life. \
-For who would bear the whips and scorns of time, \
-The oppressor's wrong, the proud man's contumely, \
-The pangs of dispriz'd love, the law's delay, \
-The insolence of office, and the spurns \
-That patient merit of the unworthy takes, \
-When he himself might his quietus make \
-With a bare bodkin?";
+const FALLBACK_TEXT: &str = "\
+No paragraphs collected yet. Please run: rstype collect";
+
+const TEST_TEXT: &str = "\
+The quick brown fox jumps over the lazy dog. \
+Pack my box with five dozen liquor jugs.";
 
 // ── Text fetching ─────────────────────────────────────────────────────────────
 
@@ -192,7 +176,7 @@ fn generate_word_salad(length: TextLength) -> String {
 fn fetch_text(source: TextSource, length: TextLength) -> String {
     match source {
         TextSource::Wikipedia => {
-            pick_collected_paragraph(length).unwrap_or_else(|| TARGET_TEXT.to_string())
+            pick_collected_paragraph(length).unwrap_or_else(|| FALLBACK_TEXT.to_string())
         }
         TextSource::WordSalad => generate_word_salad(length),
     }
@@ -955,7 +939,7 @@ impl App {
     fn new(config: Config) -> Self {
         let (fetching, fetch_rx, target) = if cfg!(test) {
             // Tests don't fetch; use the built-in text synchronously.
-            (false, None, TARGET_TEXT.chars().collect())
+            (false, None, TEST_TEXT.chars().collect())
         } else {
             let source = config.text_source;
             let length = config.text_length;
