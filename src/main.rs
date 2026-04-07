@@ -213,7 +213,7 @@ fn paragraphs_path() -> PathBuf {
     p.push(".local");
     p.push("share");
     p.push("rstype");
-    p.push("paragraphs.jsonl");
+    p.push("wikipedia.jsonl");
     p
 }
 
@@ -396,7 +396,7 @@ fn cmd_wikipedia_stats() {
 
     if paragraphs.is_empty() {
         eprintln!("No paragraphs collected yet.");
-        eprintln!("Run `rstype wikipedia collect` to download paragraphs from Wikipedia.");
+        eprintln!("Run `rstype wikipedia download` to download paragraphs from Wikipedia.");
         return;
     }
 
@@ -2655,8 +2655,8 @@ enum Commands {
 #[derive(clap::Subcommand)]
 enum WikipediaAction {
     /// Download paragraphs from Wikipedia and add them to the local collection
-    Collect {
-        /// Number of total paragraphs to have after collection
+    Download {
+        /// Number of total paragraphs to have after downloading
         #[arg(short, long, default_value_t = 1000)]
         count: usize,
     },
@@ -2676,7 +2676,7 @@ fn main() -> io::Result<()> {
     match cli.command {
         Commands::Wikipedia { action } => {
             match action {
-                WikipediaAction::Collect { count } => cmd_collect(count),
+                WikipediaAction::Download { count } => cmd_collect(count),
                 WikipediaAction::Stats => cmd_wikipedia_stats(),
                 WikipediaAction::Clear => cmd_wikipedia_clear(),
                 WikipediaAction::Show => cmd_wikipedia_show(),
