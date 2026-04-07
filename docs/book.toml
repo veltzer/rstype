@@ -1,0 +1,14 @@
+[book]
+authors = ["veltzer"]
+language = "en"
+src = "src"
+title = "RSType - Rust Typing Trainer"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/veltzer/rstype"
+edit-url-template = "https://github.com/veltzer/rstype/edit/master/docs/{path}"
