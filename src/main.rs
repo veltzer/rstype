@@ -459,6 +459,12 @@ fn cmd_wikipedia_clear() {
     }
 }
 
+/// `rstype wikipedia show` — print the storage path.
+fn cmd_wikipedia_show() {
+    let path = paragraphs_path();
+    println!("{}", path.display());
+}
+
 fn save_session(session: &Session) {
     if cfg!(test) { return; }
     let path = history_path();
@@ -2658,6 +2664,8 @@ enum WikipediaAction {
     Stats,
     /// Delete the local Wikipedia paragraph collection
     Clear,
+    /// Show the file path where Wikipedia paragraphs are stored
+    Show,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -2671,6 +2679,7 @@ fn main() -> io::Result<()> {
                 WikipediaAction::Collect { count } => cmd_collect(count),
                 WikipediaAction::Stats => cmd_wikipedia_stats(),
                 WikipediaAction::Clear => cmd_wikipedia_clear(),
+                WikipediaAction::Show => cmd_wikipedia_show(),
             }
             return Ok(());
         }
