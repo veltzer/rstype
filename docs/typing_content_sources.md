@@ -1,60 +1,83 @@
-# Typing Content Sources
+# Content Sources
 
-## Overview
-
-Currently the app has a single hard-coded text (Hamlet's soliloquy). This document
-captures ideas for how to make the source of typing material configurable and varied.
-
----
-
-## Ideas
-
-### Bundled content
-
-1. **Built-in texts** — a curated list of famous passages (Hamlet, Lincoln's Gettysburg
-   Address, etc.) the user picks from an in-app menu. No external dependencies.
-
-2. **Lessons by difficulty** — structured progression designed for learning:
-   home row only → common bigrams → full keyboard. Good for beginners.
+`rstype` supports multiple sources for typing practice. You can configure the
+default source in your config file or override it with the `--source` flag
+when running the `train` command.
 
 ---
 
-### File-based
+## Wikipedia
 
-3. **Load from file** — user specifies a file path in `~/.config/rstype.toml`.
-   The app reads it at startup. Works for prose, code, lyrics — anything.
-   This is the most flexible low-effort option.
+The Wikipedia source fetches random, high-quality paragraphs from a local
+collection. This provides varied, natural language practice on a wide range
+of topics.
 
-4. **Random line from file** — point the app at a quote file or word list;
-   it picks a random line each session for endless variety.
+### Commands
 
----
+*   **`rstype wikipedia download`**
+    Downloads paragraphs from Wikipedia until your local collection reaches
+    the target size (default: 1000). Use `-c` or `--count` to specify a
+    different total count.
+    ```bash
+    rstype wikipedia download --count 5000
+    ```
 
-### Generated
+*   **`rstype wikipedia stats`**
+    Displays statistics about your local collection, including total
+    paragraphs and file size.
 
-5. **Random common words** — generate a sequence from the top-N English words.
-   Endlessly varied, no files needed.
+*   **`rstype wikipedia clear`**
+    Deletes your local collection.
 
-6. **Code snippets** — bundle real code samples (Rust, Python, shell, etc.)
-   as typing material. Good for programmers who want domain-relevant practice.
-
----
-
-### External / dynamic
-
-7. **Wikipedia intro** — fetch the first paragraph of a random Wikipedia article
-   via the public API. Fresh content, no setup required.
-
-8. **RSS / news headlines** — fetch from a configurable feed for daily-fresh material.
-
-9. **stdin / pipe** — read target text from standard input, e.g.
-   `echo "type this" | rstype` or `cat chapter1.txt | rstype`.
-   Makes the app composable with any Unix tool.
+*   **`rstype wikipedia show`**
+    Shows the file path where the Wikipedia collection is stored.
 
 ---
 
-## Recommendation
+## Word Salad (Dictionaries)
 
-Start with **load from file** (option 3) — one config field unlocks everything:
-point it at a quote file, a source file, a lyrics file. Add **built-in texts**
-(option 1) as the default fallback so the app works out of the box with no config.
+Word salad mode generates practice text by picking random words from
+installed dictionaries. This is excellent for drilling common words and
+improving raw speed without the context of natural sentences.
+
+### Commands
+
+*   **`rstype dict list-remote`**
+    Lists all language dictionaries available for installation from
+    the [wooorm/dictionaries](https://github.com/wooorm/dictionaries) collection.
+
+*   **`rstype dict install <LANG>`**
+    Installs a specific dictionary (e.g., `en-US`, `de-DE`, `fr`).
+    ```bash
+    rstype dict install en-US
+    ```
+
+*   **`rstype dict list`**
+    Lists all dictionaries currently installed on your system.
+
+*   **`rstype dict remove <LANG>`**
+    Removes an installed dictionary.
+
+*   **`rstype dict show`**
+    Shows the directory path where dictionaries are stored.
+
+---
+
+## Usage in Training
+
+To use a specific source during a training session:
+
+```bash
+# Train with Wikipedia paragraphs
+rstype train --source wikipedia
+
+# Train with Word Salad (uses the first available installed dictionary)
+rstype train --source word-salad
+```
+
+You can also specify the target length of the text:
+
+```bash
+# Possible lengths: one-line, short-paragraph, paragraph, long-paragraph
+rstype train --source wikipedia --length short-paragraph
+```
