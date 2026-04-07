@@ -18,7 +18,7 @@ use ratatui::Terminal;
 use serde::{Deserialize, Serialize};
 
 const FALLBACK_TEXT: &str = "\
-No paragraphs collected yet. Please run: rstype collect";
+No paragraphs collected yet. Please run: rstype wikipedia download";
 
 const TEST_TEXT: &str = "\
 The quick brown fox jumps over the lazy dog. \
@@ -443,6 +443,19 @@ fn cmd_wikipedia_stats() {
             false
         }).count();
         println!("  {:<18} {}", len.label(), count);
+    }
+}
+
+/// `rstype wikipedia clear` — delete the local paragraph collection.
+fn cmd_wikipedia_clear() {
+    let path = paragraphs_path();
+    if path.exists() {
+        match fs::remove_file(&path) {
+            Ok(()) => eprintln!("Deleted {}", path.display()),
+            Err(e) => eprintln!("Error deleting {}: {}", path.display(), e),
+        }
+    } else {
+        eprintln!("Nothing to delete — no collection found at {}", path.display());
     }
 }
 
@@ -2643,6 +2656,8 @@ enum WikipediaAction {
     },
     /// Show statistics about the local Wikipedia paragraph collection
     Stats,
+    /// Delete the local Wikipedia paragraph collection
+    Clear,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -2655,6 +2670,7 @@ fn main() -> io::Result<()> {
             match action {
                 WikipediaAction::Collect { count } => cmd_collect(count),
                 WikipediaAction::Stats => cmd_wikipedia_stats(),
+                WikipediaAction::Clear => cmd_wikipedia_clear(),
             }
             return Ok(());
         }
