@@ -1,5 +1,0 @@
-Can we draw a keyboard on screen and every time I click a key the keyboard will reflect it?
-DONE: On-screen QWERTY keyboard with live key highlighting (green=correct, red=wrong, cyan=expected next key).
-
-Why dont we do a command "rstype collect" which will collect about a thousand paragraphs from wikipedia or other sources and store them in ~/... somewhere appropriate instead of searching wikipedia over and owver? And so in wikiepdia mode we will just randomize paragraphs from that collection
-DONE: `rstype wikipedia download` fetches paragraphs to ~/.local/share/rstype/wikipedia.jsonl. Also available in-app via the Wikipedia screen (Ctrl+W). Additional subcommands: stats, show, clear.
