@@ -552,6 +552,7 @@ fn save_config(cfg: &Config) {
 enum Screen {
     Typing,
     Config,
+    Stats,
     Calendar,
     About,
     Exit,
@@ -715,6 +716,10 @@ impl App {
                     self.screen = Screen::About;
                     return false;
                 }
+                KeyCode::Char('s') => {
+                    self.screen = Screen::Stats;
+                    return false;
+                }
                 KeyCode::Char('n') => {
                     // Fetch new text — only when not mid-session and not already fetching
                     if !self.fetching && self.typing_state != TypingState::Typing {
@@ -732,7 +737,7 @@ impl App {
         let typing_in_progress = self.screen == Screen::Typing
             && self.typing_state == TypingState::Typing;
         if !typing_in_progress {
-            const ORDER: [Screen; 5] = [Screen::Typing, Screen::Config, Screen::Calendar, Screen::About, Screen::Exit];
+            const ORDER: [Screen; 6] = [Screen::Typing, Screen::Config, Screen::Stats, Screen::Calendar, Screen::About, Screen::Exit];
             let cur = ORDER.iter().position(|s| s == &self.screen).unwrap_or(0);
             if key.code == KeyCode::Left {
                 self.screen = ORDER[(cur + ORDER.len() - 1) % ORDER.len()].clone();
@@ -751,7 +756,7 @@ impl App {
         // Esc goes back to train screen (from any non-typing screen), or quits if on train
         if key.code == KeyCode::Esc {
             match self.screen {
-                Screen::Config | Screen::Calendar | Screen::About => {
+                Screen::Config | Screen::Stats | Screen::Calendar | Screen::About => {
                     self.screen = Screen::Typing;
                     return false;
                 }
@@ -769,6 +774,7 @@ impl App {
             Screen::Config   => self.on_key_config(key),
             Screen::Typing   => self.on_key_typing(key),
             Screen::Calendar => self.on_key_calendar(key),
+            Screen::Stats    => {}
             Screen::About    => {}
             Screen::Exit     => {}
         }
@@ -1011,6 +1017,7 @@ fn render(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> i
 
         match app.screen {
             Screen::Config   => render_config(frame, body_rect, app),
+            Screen::Stats    => render_stats(frame, indented, app),
             Screen::Calendar => render_calendar(frame, indented, app),
             Screen::About    => render_about(frame, indented),
             Screen::Exit     => render_exit(frame, indented),
@@ -1032,6 +1039,7 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 
     let is_train    = app.screen == Screen::Typing;
     let is_config   = app.screen == Screen::Config;
+    let is_stats    = app.screen == Screen::Stats;
     let is_calendar = app.screen == Screen::Calendar;
     let is_about    = app.screen == Screen::About;
     let is_exit     = app.screen == Screen::Exit;
@@ -1041,6 +1049,7 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     for (before, key, after, active) in [
         ("",      'T', "rain",   is_train),
         ("Confi", 'G', "",       is_config),
+        ("",      'S', "tats",   is_stats),
         ("",      'H', "istory", is_calendar),
         ("",      'A', "bout",   is_about),
         ("",      'E', "xit",    is_exit),
@@ -1057,8 +1066,8 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     }
 
     // Right-align "rstype by Mark Veltzer" in the remaining space
-    // Left side: "  " + "Train  " + "ConfiG  " + "History  " + "About  " + "Exit  " = 2+8+8+9+8+6 = 41
-    let left_width: u16 = 41;
+    // Left side: "  " + "Train  " + "ConfiG  " + "Stats  " + "History  " + "About  " + "Exit  " = 2+8+8+8+9+8+6 = 49
+    let left_width: u16 = 49;
     let title = "rstype by Mark Veltzer  ";
     let title_len = title.len() as u16;
     let pad = area.width.saturating_sub(left_width + title_len);
@@ -1421,6 +1430,134 @@ fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         Paragraph::new(lines).alignment(Alignment::Center),
         result_rect,
     );
+}
+
+fn render_stats(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    let mut lines: Vec<Line> = Vec::new();
+
+    let row = |label: &str, value: String, color: Color| -> Line<'static> {
+        Line::from(vec![
+            Span::styled(format!("  {:<18}", label), Style::default().fg(Color::DarkGray)),
+            Span::styled(value, Style::default().fg(color).add_modifier(Modifier::BOLD)),
+        ])
+    };
+
+    // ── Last session ──────────────────────────────────────────────────────
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Last session",
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    if app.typing_state == TypingState::Done {
+        let accuracy = app.accuracy();
+        let acc_color = if accuracy >= 95.0 { Color::Green } else if accuracy >= 80.0 { Color::Yellow } else { Color::Red };
+
+        lines.push(row("speed", format!("{:.1} WPM", app.wpm), Color::Yellow));
+        lines.push(row("accuracy", format!("{:.1}%", accuracy), acc_color));
+        lines.push(row("errors", format!("{}", app.errors),
+            if app.errors == 0 { Color::Green } else { Color::Red }));
+        lines.push(row("characters", format!("{}", app.target.len()), Color::Yellow));
+        lines.push(row("words", format!("{}", app.target.len() / 5), Color::Yellow));
+
+        // ── Hand report ───────────────────────────────────────────────────
+        let (left_stats, right_stats) = compute_hand_stats(&app.target, &app.typed, &app.keystrokes);
+
+        if left_stats.total_keys > 0 || right_stats.total_keys > 0 {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "  Hand report",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(""));
+
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {:<18}", ""), Style::default()),
+                Span::styled(format!("{:>10}", "Left"), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{:>10}", "Right"), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            ]));
+
+            let left_resp = if left_stats.total_keys > 1 {
+                format!("{:.0} ms", left_stats.avg_response_ms)
+            } else { "—".to_string() };
+            let right_resp = if right_stats.total_keys > 1 {
+                format!("{:.0} ms", right_stats.avg_response_ms)
+            } else { "—".to_string() };
+            lines.push(Line::from(vec![
+                Span::raw(format!("  {:<18}", "avg response")),
+                Span::styled(format!("{:>10}", left_resp), Style::default().fg(Color::White)),
+                Span::styled(format!("{:>10}", right_resp), Style::default().fg(Color::White)),
+            ]));
+
+            lines.push(Line::from(vec![
+                Span::raw(format!("  {:<18}", "keys typed")),
+                Span::styled(format!("{:>10}", left_stats.total_keys), Style::default().fg(Color::White)),
+                Span::styled(format!("{:>10}", right_stats.total_keys), Style::default().fg(Color::White)),
+            ]));
+
+            lines.push(Line::from(vec![
+                Span::raw(format!("  {:<18}", "errors")),
+                Span::styled(
+                    format!("{:>10}", left_stats.errors),
+                    Style::default().fg(if left_stats.errors == 0 { Color::Green } else { Color::Red }),
+                ),
+                Span::styled(
+                    format!("{:>10}", right_stats.errors),
+                    Style::default().fg(if right_stats.errors == 0 { Color::Green } else { Color::Red }),
+                ),
+            ]));
+
+            lines.push(Line::from(vec![
+                Span::raw(format!("  {:<18}", "error rate")),
+                Span::styled(
+                    format!("{:>9.1}%", left_stats.error_rate()),
+                    Style::default().fg(if left_stats.error_rate() < 5.0 { Color::Green } else { Color::Red }),
+                ),
+                Span::styled(
+                    format!("{:>9.1}%", right_stats.error_rate()),
+                    Style::default().fg(if right_stats.error_rate() < 5.0 { Color::Green } else { Color::Red }),
+                ),
+            ]));
+        }
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  No completed session yet. Finish a typing session to see stats.",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    // ── Today's totals from history ───────────────────────────────────────
+    let stats = load_history_stats();
+    let (year, month) = today_ym();
+    let today_day = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let (_, _, d) = days_to_ymd(secs / 86400);
+        d as u32
+    };
+    let date_key = format!("{:04}-{:02}-{:02}", year, month, today_day);
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Today's totals",
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    if let Some(&(sessions, avg_wpm, words, chars)) = stats.get(&date_key) {
+        lines.push(row("sessions", sessions.to_string(), Color::Yellow));
+        lines.push(row("avg WPM", format!("{:.1}", avg_wpm), Color::Yellow));
+        lines.push(row("total words", words.to_string(), Color::Yellow));
+        lines.push(row("total chars", chars.to_string(), Color::Yellow));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  No sessions today yet.",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_exit(frame: &mut ratatui::Frame, area: Rect) {
