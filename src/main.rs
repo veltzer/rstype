@@ -389,6 +389,63 @@ fn cmd_collect(target_count: usize) {
     );
 }
 
+/// `rstype wikipedia stats` — print collection statistics to the terminal.
+fn cmd_wikipedia_stats() {
+    let paragraphs = load_paragraphs();
+    let path = paragraphs_path();
+
+    if paragraphs.is_empty() {
+        eprintln!("No paragraphs collected yet.");
+        eprintln!("Run `rstype wikipedia collect` to download paragraphs from Wikipedia.");
+        return;
+    }
+
+    let total = paragraphs.len();
+    let total_chars: usize = paragraphs.iter().map(|p| p.len()).sum();
+    let total_words: usize = paragraphs.iter().map(|p| p.split_whitespace().count()).sum();
+    let avg_len = total_chars as f64 / total as f64;
+    let min_len = paragraphs.iter().map(|p| p.len()).min().unwrap_or(0);
+    let max_len = paragraphs.iter().map(|p| p.len()).max().unwrap_or(0);
+
+    println!("Wikipedia collection");
+    println!("  file:             {}", path.display());
+    if let Ok(meta) = fs::metadata(&path) {
+        println!("  file size:        {:.0} KB", meta.len() as f64 / 1024.0);
+    }
+    println!();
+    println!("  total paragraphs: {}", total);
+    println!("  total characters: {}", total_chars);
+    println!("  total words:      {}", total_words);
+    println!("  avg length:       {:.0} chars", avg_len);
+    println!("  shortest:         {} chars", min_len);
+    println!("  longest:          {} chars", max_len);
+
+    println!();
+    println!("Usable paragraphs by length:");
+    let lengths = [
+        TextLength::OneLine,
+        TextLength::ShortParagraph,
+        TextLength::Paragraph,
+        TextLength::LongParagraph,
+    ];
+    for len in &lengths {
+        let min = len.min_chars();
+        let max = len.max_chars();
+        let count = paragraphs.iter().filter(|p| {
+            let plen = p.len();
+            if plen >= min && plen <= max { return true; }
+            if plen > max {
+                let trimmed: String = p.chars().take(max).collect();
+                if let Some(pos) = trimmed.rfind(|c: char| c == '.' || c == '?' || c == '!') {
+                    return trimmed[..=pos].trim().len() >= min;
+                }
+            }
+            false
+        }).count();
+        println!("  {:<18} {}", len.label(), count);
+    }
+}
+
 fn save_session(session: &Session) {
     if cfg!(test) { return; }
     let path = history_path();
@@ -2563,12 +2620,10 @@ enum Commands {
         #[arg(long)]
         min_rows: Option<u16>,
     },
-    /// Collect ~1000 paragraphs from Wikipedia and store them locally for
-    /// offline use. Stored in ~/.local/share/rstype/paragraphs.jsonl
-    Collect {
-        /// Number of paragraphs to collect
-        #[arg(short, long, default_value_t = 1000)]
-        count: usize,
+    /// Manage the local Wikipedia paragraph collection
+    Wikipedia {
+        #[command(subcommand)]
+        action: WikipediaAction,
     },
     /// Generate shell completion scripts
     Complete {
@@ -2578,14 +2633,29 @@ enum Commands {
     },
 }
 
+#[derive(clap::Subcommand)]
+enum WikipediaAction {
+    /// Download paragraphs from Wikipedia and add them to the local collection
+    Collect {
+        /// Number of total paragraphs to have after collection
+        #[arg(short, long, default_value_t = 1000)]
+        count: usize,
+    },
+    /// Show statistics about the local Wikipedia paragraph collection
+    Stats,
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() -> io::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Collect { count } => {
-            cmd_collect(count);
+        Commands::Wikipedia { action } => {
+            match action {
+                WikipediaAction::Collect { count } => cmd_collect(count),
+                WikipediaAction::Stats => cmd_wikipedia_stats(),
+            }
             return Ok(());
         }
         Commands::Complete { shell } => {
