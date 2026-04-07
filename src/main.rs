@@ -192,61 +192,12 @@ fn generate_word_salad(length: TextLength) -> String {
 fn fetch_text(source: TextSource, length: TextLength) -> String {
     match source {
         TextSource::Wikipedia => {
-            // Try local collection first, fall back to live fetch
-            if let Some(para) = pick_collected_paragraph(length) {
-                para
-            } else {
-                fetch_wikipedia_ascii(length).unwrap_or_else(|| TARGET_TEXT.to_string())
-            }
+            pick_collected_paragraph(length).unwrap_or_else(|| TARGET_TEXT.to_string())
         }
         TextSource::WordSalad => generate_word_salad(length),
     }
 }
 
-/// Fetch up to 20 random articles in one request, return the first with
-/// only typeable ASCII characters and within the requested length range.
-fn fetch_wikipedia_ascii(length: TextLength) -> Option<String> {
-    let min = length.min_chars();
-    let max = length.max_chars();
-    let resp = ureq::get("https://en.wikipedia.org/w/api.php")
-        .query("action", "query")
-        .query("generator", "random")
-        .query("grnnamespace", "0")
-        .query("grnlimit", "20")
-        .query("prop", "extracts")
-        .query("exintro", "true")
-        .query("explaintext", "true")
-        .query("format", "json")
-        .set("User-Agent", "rstype/1.0 (typing trainer)")
-        .call()
-        .ok()?;
-    let json: serde_json::Value = resp.into_json().ok()?;
-    let pages = json.get("query")?.get("pages")?.as_object()?;
-
-    for page in pages.values() {
-        let extract = page.get("extract")?.as_str().unwrap_or("");
-        for para in extract.split('\n') {
-            if para.len() < min { continue; }
-            let trimmed: String = para.chars().take(max).collect();
-            let candidate = if trimmed.len() >= max {
-                // Snap to last sentence boundary
-                if let Some(pos) = trimmed.rfind(|c| c == '.' || c == '?' || c == '!') {
-                    trimmed[..=pos].trim().to_string()
-                } else {
-                    trimmed.trim().to_string()
-                }
-            } else {
-                trimmed.trim().to_string()
-            };
-            if candidate.len() >= min
-                && candidate.chars().all(|c| c.is_ascii() && c >= ' ' && c != '\x7f')
-            {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
 #[derive(Serialize, Deserialize)]
 struct Keystroke {
     typed: String,
