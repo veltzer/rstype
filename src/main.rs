@@ -890,9 +890,18 @@ enum Screen {
     Typing,
     Config,
     Stats,
+    Wikipedia,
     Calendar,
     About,
     Exit,
+}
+
+/// Messages sent from the background Wikipedia collection thread.
+enum WikiCollectMsg {
+    /// A batch completed: (total_so_far, request_number)
+    Progress(usize, u32),
+    /// Collection finished: total paragraphs stored
+    Done(usize),
 }
 
 struct App {
@@ -937,6 +946,13 @@ struct App {
     calendar_year: i32,
     calendar_month: u32,
     calendar_stats: HashMap<String, (usize, f64, usize, usize)>,
+
+    // wikipedia collection
+    wiki_collecting: bool,
+    wiki_collect_rx: Option<std::sync::mpsc::Receiver<WikiCollectMsg>>,
+    wiki_collected: usize,
+    wiki_target: usize,
+    wiki_requests: u32,
 }
 
 #[derive(PartialEq, Debug)]
@@ -984,6 +1000,11 @@ impl App {
             calendar_year: 0,
             calendar_month: 1,
             calendar_stats: HashMap::new(),
+            wiki_collecting: false,
+            wiki_collect_rx: None,
+            wiki_collected: 0,
+            wiki_target: 0,
+            wiki_requests: 0,
         }
     }
 
@@ -1020,6 +1041,76 @@ impl App {
                 self.fetch_rx = None;
             }
         }
+    }
+
+    fn poll_wiki_collect(&mut self) {
+        let mut done = false;
+        if let Some(rx) = &self.wiki_collect_rx {
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    WikiCollectMsg::Progress(total, reqs) => {
+                        self.wiki_collected = total;
+                        self.wiki_requests = reqs;
+                    }
+                    WikiCollectMsg::Done(total) => {
+                        self.wiki_collected = total;
+                        self.wiki_collecting = false;
+                        done = true;
+                    }
+                }
+            }
+        }
+        if done {
+            self.wiki_collect_rx = None;
+        }
+    }
+
+    fn start_wiki_collect(&mut self, target: usize) {
+        if self.wiki_collecting { return; }
+        self.wiki_collecting = true;
+        self.wiki_target = target;
+        self.wiki_collected = 0;
+        self.wiki_requests = 0;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.wiki_collect_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let path = paragraphs_path();
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let existing = load_paragraphs();
+            let mut seen: std::collections::HashSet<String> = existing.into_iter().collect();
+            let mut total = seen.len();
+            let _ = tx.send(WikiCollectMsg::Progress(total, 0));
+
+            let mut file = match OpenOptions::new().create(true).append(true).open(&path) {
+                Ok(f) => f,
+                Err(_) => {
+                    let _ = tx.send(WikiCollectMsg::Done(total));
+                    return;
+                }
+            };
+
+            let mut requests = 0u32;
+            while total < target {
+                requests += 1;
+                let batch = fetch_wikipedia_paragraphs_batch();
+                for para in batch {
+                    if seen.contains(&para) { continue; }
+                    seen.insert(para.clone());
+                    if let Ok(json) = serde_json::to_string(&serde_json::json!({ "text": para })) {
+                        let _ = writeln!(file, "{}", json);
+                        total += 1;
+                    }
+                    if total >= target { break; }
+                }
+                let _ = tx.send(WikiCollectMsg::Progress(total, requests));
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            let _ = tx.send(WikiCollectMsg::Done(total));
+        });
     }
 
     fn restart(&mut self) {
@@ -1065,6 +1156,10 @@ impl App {
                     self.screen = Screen::Stats;
                     return false;
                 }
+                KeyCode::Char('w') => {
+                    self.screen = Screen::Wikipedia;
+                    return false;
+                }
                 KeyCode::Char('n') => {
                     // Fetch new text — only when not mid-session and not already fetching
                     if !self.fetching && self.typing_state != TypingState::Typing {
@@ -1082,7 +1177,7 @@ impl App {
         let typing_in_progress = self.screen == Screen::Typing
             && self.typing_state == TypingState::Typing;
         if !typing_in_progress {
-            const ORDER: [Screen; 6] = [Screen::Typing, Screen::Config, Screen::Stats, Screen::Calendar, Screen::About, Screen::Exit];
+            const ORDER: [Screen; 7] = [Screen::Typing, Screen::Config, Screen::Stats, Screen::Wikipedia, Screen::Calendar, Screen::About, Screen::Exit];
             let cur = ORDER.iter().position(|s| s == &self.screen).unwrap_or(0);
             if key.code == KeyCode::Left {
                 self.screen = ORDER[(cur + ORDER.len() - 1) % ORDER.len()].clone();
@@ -1101,7 +1196,7 @@ impl App {
         // Esc goes back to train screen (from any non-typing screen), or quits if on train
         if key.code == KeyCode::Esc {
             match self.screen {
-                Screen::Config | Screen::Stats | Screen::Calendar | Screen::About => {
+                Screen::Config | Screen::Stats | Screen::Wikipedia | Screen::Calendar | Screen::About => {
                     self.screen = Screen::Typing;
                     return false;
                 }
@@ -1116,12 +1211,13 @@ impl App {
         }
 
         match self.screen {
-            Screen::Config   => self.on_key_config(key),
-            Screen::Typing   => self.on_key_typing(key),
-            Screen::Calendar => self.on_key_calendar(key),
-            Screen::Stats    => {}
-            Screen::About    => {}
-            Screen::Exit     => {}
+            Screen::Config    => self.on_key_config(key),
+            Screen::Typing    => self.on_key_typing(key),
+            Screen::Calendar  => self.on_key_calendar(key),
+            Screen::Wikipedia => self.on_key_wikipedia(key),
+            Screen::Stats     => {}
+            Screen::About     => {}
+            Screen::Exit      => {}
         }
         false
     }
@@ -1153,6 +1249,16 @@ impl App {
                 self.config.text_source = SOURCES[self.config_source_cursor];
                 self.config.text_length = LENGTHS[self.config_length_cursor];
                 save_config(&self.config);
+            }
+            _ => {}
+        }
+    }
+
+    fn on_key_wikipedia(&mut self, key: KeyEvent) {
+        if self.wiki_collecting { return; }
+        match key.code {
+            KeyCode::Char('d') | KeyCode::Enter => {
+                self.start_wiki_collect(1000);
             }
             _ => {}
         }
@@ -1366,11 +1472,12 @@ fn render(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> i
         );
 
         match app.screen {
-            Screen::Config   => render_config(frame, body_rect, app),
-            Screen::Stats    => render_stats(frame, indented, app),
-            Screen::Calendar => render_calendar(frame, indented, app),
-            Screen::About    => render_about(frame, indented),
-            Screen::Exit     => render_exit(frame, indented),
+            Screen::Config    => render_config(frame, body_rect, app),
+            Screen::Stats     => render_stats(frame, indented, app),
+            Screen::Wikipedia => render_wikipedia(frame, indented, app),
+            Screen::Calendar  => render_calendar(frame, indented, app),
+            Screen::About     => render_about(frame, indented),
+            Screen::Exit      => render_exit(frame, indented),
             Screen::Typing   => match app.typing_state {
                 TypingState::Done => render_done(frame, body_rect, app),
                 _ => render_typing(frame, indented, app),
@@ -1390,6 +1497,7 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let is_train    = app.screen == Screen::Typing;
     let is_config   = app.screen == Screen::Config;
     let is_stats    = app.screen == Screen::Stats;
+    let is_wiki     = app.screen == Screen::Wikipedia;
     let is_calendar = app.screen == Screen::Calendar;
     let is_about    = app.screen == Screen::About;
     let is_exit     = app.screen == Screen::Exit;
@@ -1397,12 +1505,13 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let mut spans = vec![Span::styled("  ", normal_style)];
 
     for (before, key, after, active) in [
-        ("",      'T', "rain",   is_train),
-        ("Confi", 'G', "",       is_config),
-        ("",      'S', "tats",   is_stats),
-        ("",      'H', "istory", is_calendar),
-        ("",      'A', "bout",   is_about),
-        ("",      'E', "xit",    is_exit),
+        ("",      'T', "rain",      is_train),
+        ("Confi", 'G', "",          is_config),
+        ("",      'S', "tats",      is_stats),
+        ("",      'W', "ikipedia",  is_wiki),
+        ("",      'H', "istory",    is_calendar),
+        ("",      'A', "bout",      is_about),
+        ("",      'E', "xit",       is_exit),
     ] {
         let (ks, rs) = if active { (active_key_style, active_style) } else { (key_style, normal_style) };
         if !before.is_empty() {
@@ -1416,8 +1525,7 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     }
 
     // Right-align "rstype by Mark Veltzer" in the remaining space
-    // Left side: "  " + "Train  " + "ConfiG  " + "Stats  " + "History  " + "About  " + "Exit  " = 2+8+8+8+9+8+6 = 49
-    let left_width: u16 = 49;
+    let left_width: u16 = 60;
     let title = "rstype by Mark Veltzer  ";
     let title_len = title.len() as u16;
     let pad = area.width.saturating_sub(left_width + title_len);
@@ -1888,6 +1996,127 @@ fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         Paragraph::new(lines).alignment(Alignment::Center),
         result_rect,
     );
+}
+
+fn render_wikipedia(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    let mut lines: Vec<Line> = Vec::new();
+
+    let row = |label: &str, value: String, color: Color| -> Line<'static> {
+        Line::from(vec![
+            Span::styled(format!("  {:<22}", label), Style::default().fg(Color::DarkGray)),
+            Span::styled(value, Style::default().fg(color).add_modifier(Modifier::BOLD)),
+        ])
+    };
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Wikipedia collection",
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    let paragraphs = load_paragraphs();
+    let total = paragraphs.len();
+
+    if total == 0 {
+        lines.push(Line::from(Span::styled(
+            "  No paragraphs collected yet.",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        lines.push(row("total paragraphs", total.to_string(), Color::Yellow));
+
+        let total_chars: usize = paragraphs.iter().map(|p| p.len()).sum();
+        let total_words: usize = paragraphs.iter().map(|p| p.split_whitespace().count()).sum();
+        let avg_len = total_chars as f64 / total as f64;
+        let min_len = paragraphs.iter().map(|p| p.len()).min().unwrap_or(0);
+        let max_len = paragraphs.iter().map(|p| p.len()).max().unwrap_or(0);
+
+        lines.push(row("total characters", total_chars.to_string(), Color::Yellow));
+        lines.push(row("total words", total_words.to_string(), Color::Yellow));
+        lines.push(row("avg length", format!("{:.0} chars", avg_len), Color::Yellow));
+        lines.push(row("shortest", format!("{} chars", min_len), Color::Yellow));
+        lines.push(row("longest", format!("{} chars", max_len), Color::Yellow));
+
+        // Breakdown by length category
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Usable paragraphs by length",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+
+        let lengths = [
+            TextLength::OneLine,
+            TextLength::ShortParagraph,
+            TextLength::Paragraph,
+            TextLength::LongParagraph,
+        ];
+        for len in &lengths {
+            let min = len.min_chars();
+            let max = len.max_chars();
+            // Count paragraphs that fit directly or could be trimmed to fit
+            let count = paragraphs.iter().filter(|p| {
+                let plen = p.len();
+                if plen >= min && plen <= max { return true; }
+                // Could be trimmed: long enough and has a sentence boundary
+                if plen > max {
+                    let trimmed: String = p.chars().take(max).collect();
+                    if let Some(pos) = trimmed.rfind(|c: char| c == '.' || c == '?' || c == '!') {
+                        return trimmed[..=pos].trim().len() >= min;
+                    }
+                }
+                false
+            }).count();
+            let color = if count > 0 { Color::Green } else { Color::Red };
+            lines.push(row(
+                len.label(),
+                format!("{}", count),
+                color,
+            ));
+        }
+
+        // File path and size
+        let path = paragraphs_path();
+        if let Ok(meta) = fs::metadata(&path) {
+            let size_kb = meta.len() as f64 / 1024.0;
+            lines.push(Line::from(""));
+            lines.push(row("file size", format!("{:.0} KB", size_kb), Color::DarkGray));
+        }
+    }
+
+    // Download section
+    lines.push(Line::from(""));
+    lines.push(Line::from(""));
+
+    if app.wiki_collecting {
+        let pct = if app.wiki_target > 0 {
+            (app.wiki_collected as f64 / app.wiki_target as f64 * 100.0).min(100.0)
+        } else {
+            0.0
+        };
+        // Progress bar
+        let bar_width = 30usize;
+        let filled = (pct / 100.0 * bar_width as f64) as usize;
+        let empty = bar_width.saturating_sub(filled);
+        let bar = format!("[{}{}] {:.0}%", "█".repeat(filled), "░".repeat(empty), pct);
+
+        lines.push(Line::from(Span::styled(
+            format!("  Downloading... request {} — {} / {} paragraphs", app.wiki_requests, app.wiki_collected, app.wiki_target),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            format!("  {}", bar),
+            Style::default().fg(Color::Cyan),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  Press D or Enter to download 1000 paragraphs from Wikipedia",
+            Style::default().fg(Color::White),
+        )));
+    }
+
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_stats(frame: &mut ratatui::Frame, area: Rect, app: &App) {
@@ -2379,6 +2608,7 @@ fn main() -> io::Result<()> {
 
     loop {
         app.poll_fetch();
+        app.poll_wiki_collect();
         render(&mut terminal, &app)?;
 
         if event::poll(Duration::from_millis(50))? {
