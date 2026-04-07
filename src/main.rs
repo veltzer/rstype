@@ -92,13 +92,13 @@ fn fetch_wikipedia_ascii(length: TextLength) -> Option<String> {
     }
     None
 }
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Keystroke {
     typed: String,
     offset_ms: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Session {
     timestamp: String,
     text: String,
@@ -376,6 +376,61 @@ fn load_history_stats() -> HashMap<String, (usize, f64, usize, usize)> {
         v.1 /= v.0 as f64;
     }
     map
+}
+
+/// Reconstruct the typed characters from a keystroke log.
+fn reconstruct_typed(keystrokes: &[Keystroke]) -> Vec<char> {
+    let mut typed = Vec::new();
+    for ks in keystrokes {
+        if ks.typed == "Backspace" {
+            typed.pop();
+        } else if ks.typed == "Space" {
+            typed.push(' ');
+        } else if ks.typed.chars().count() == 1 {
+            typed.push(ks.typed.chars().next().unwrap());
+        }
+    }
+    typed
+}
+
+/// Load all sessions from history and compute aggregate per-hand stats.
+fn load_history_hand_stats() -> (HandStats, HandStats) {
+    let mut left = HandStats::default();
+    let mut right = HandStats::default();
+    let mut left_total_ms: f64 = 0.0;
+    let mut right_total_ms: f64 = 0.0;
+    let mut left_interval_count: usize = 0;
+    let mut right_interval_count: usize = 0;
+
+    let path = history_path();
+    let Ok(content) = fs::read_to_string(&path) else { return (left, right); };
+    for line in content.lines() {
+        let Ok(session) = serde_json::from_str::<Session>(line) else { continue; };
+        let target: Vec<char> = session.text.chars().collect();
+        let typed = reconstruct_typed(&session.keystrokes);
+        let (sl, sr) = compute_hand_stats(&target, &typed, &session.keystrokes);
+
+        left.total_keys += sl.total_keys;
+        left.errors += sl.errors;
+        right.total_keys += sr.total_keys;
+        right.errors += sr.errors;
+
+        if sl.total_keys > 1 {
+            let count = sl.total_keys - 1;
+            left_total_ms += sl.avg_response_ms * count as f64;
+            left_interval_count += count;
+        }
+        if sr.total_keys > 1 {
+            let count = sr.total_keys - 1;
+            right_total_ms += sr.avg_response_ms * count as f64;
+            right_interval_count += count;
+        }
+    }
+
+    left.avg_response_ms = if left_interval_count > 0 { left_total_ms / left_interval_count as f64 } else { 0.0 };
+    right.avg_response_ms = if right_interval_count > 0 { right_total_ms / right_interval_count as f64 } else { 0.0 };
+
+    (left, right)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, clap::ValueEnum)]
@@ -1561,6 +1616,65 @@ fn render_stats(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         lines.push(row("avg WPM", format!("{:.1}", overall_avg_wpm), Color::Yellow));
         lines.push(row("total words", total_words.to_string(), Color::Yellow));
         lines.push(row("total chars", total_chars.to_string(), Color::Yellow));
+
+        // ── All-time hand breakdown ───────────────────────────────────
+        let (left_all, right_all) = load_history_hand_stats();
+        if left_all.total_keys > 0 || right_all.total_keys > 0 {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "  All-time hand report",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(""));
+
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {:<18}", ""), Style::default()),
+                Span::styled(format!("{:>10}", "Left"), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{:>10}", "Right"), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            ]));
+
+            let left_resp = if left_all.total_keys > 1 {
+                format!("{:.0} ms", left_all.avg_response_ms)
+            } else { "—".to_string() };
+            let right_resp = if right_all.total_keys > 1 {
+                format!("{:.0} ms", right_all.avg_response_ms)
+            } else { "—".to_string() };
+            lines.push(Line::from(vec![
+                Span::raw(format!("  {:<18}", "avg response")),
+                Span::styled(format!("{:>10}", left_resp), Style::default().fg(Color::White)),
+                Span::styled(format!("{:>10}", right_resp), Style::default().fg(Color::White)),
+            ]));
+
+            lines.push(Line::from(vec![
+                Span::raw(format!("  {:<18}", "keys typed")),
+                Span::styled(format!("{:>10}", left_all.total_keys), Style::default().fg(Color::White)),
+                Span::styled(format!("{:>10}", right_all.total_keys), Style::default().fg(Color::White)),
+            ]));
+
+            lines.push(Line::from(vec![
+                Span::raw(format!("  {:<18}", "errors")),
+                Span::styled(
+                    format!("{:>10}", left_all.errors),
+                    Style::default().fg(if left_all.errors == 0 { Color::Green } else { Color::Red }),
+                ),
+                Span::styled(
+                    format!("{:>10}", right_all.errors),
+                    Style::default().fg(if right_all.errors == 0 { Color::Green } else { Color::Red }),
+                ),
+            ]));
+
+            lines.push(Line::from(vec![
+                Span::raw(format!("  {:<18}", "error rate")),
+                Span::styled(
+                    format!("{:>9.1}%", left_all.error_rate()),
+                    Style::default().fg(if left_all.error_rate() < 5.0 { Color::Green } else { Color::Red }),
+                ),
+                Span::styled(
+                    format!("{:>9.1}%", right_all.error_rate()),
+                    Style::default().fg(if right_all.error_rate() < 5.0 { Color::Green } else { Color::Red }),
+                ),
+            ]));
+        }
     }
 
     frame.render_widget(Paragraph::new(lines), area);
