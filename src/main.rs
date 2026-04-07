@@ -558,7 +558,7 @@ struct Config {
 }
 
 fn default_min_cols() -> u16 { 76 }
-fn default_min_rows() -> u16 { 26 }
+fn default_min_rows() -> u16 { 32 }
 
 impl Default for Config {
     fn default() -> Self {
@@ -1283,6 +1283,13 @@ fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                 stats_rect,
             );
         }
+    }
+
+    // ── On-screen keyboard ────────────────────────────────────────────────
+    let kb_y = bar_y + 4;
+    let kb_rect = Rect::new(area.x, kb_y, area.width, keyboard_h);
+    if kb_rect.bottom() <= area.bottom() {
+        render_keyboard(frame, kb_rect, app);
     }
 
     // ── Ctrl+N hint (shown always except while fetching) ──────────────────
