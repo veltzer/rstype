@@ -41,10 +41,158 @@ With a bare bodkin?";
 
 // ── Text fetching ─────────────────────────────────────────────────────────────
 
+const COMMON_WORDS: &[&str] = &[
+    "able", "about", "above", "accept", "across", "act", "add", "afraid", "after", "again",
+    "agree", "air", "all", "almost", "along", "already", "also", "always", "amount", "an",
+    "and", "anger", "angry", "animal", "answer", "any", "appear", "apple", "area", "arm",
+    "around", "arrive", "art", "as", "ask", "at", "away", "back", "bad", "bag",
+    "ball", "bank", "base", "basket", "bath", "be", "bear", "beat", "beautiful", "because",
+    "bed", "before", "began", "begin", "behind", "believe", "below", "beside", "best", "better",
+    "between", "big", "bird", "bit", "black", "block", "blood", "blue", "board", "boat",
+    "body", "bone", "book", "both", "bottom", "box", "boy", "brain", "branch", "bread",
+    "break", "breath", "bridge", "bring", "brother", "brown", "build", "built", "burn", "bus",
+    "busy", "but", "buy", "by", "call", "calm", "came", "can", "capital", "car",
+    "care", "carry", "cat", "catch", "caught", "cause", "center", "chain", "chair", "chance",
+    "change", "charge", "cheap", "check", "chief", "child", "choose", "circle", "city", "claim",
+    "class", "clean", "clear", "climb", "clock", "close", "cloud", "coast", "cold", "collect",
+    "color", "column", "come", "common", "company", "compare", "complete", "concern", "connect", "consider",
+    "contain", "continue", "control", "cook", "cool", "copy", "corner", "correct", "cost", "could",
+    "count", "country", "course", "cover", "create", "cross", "cry", "cup", "current", "cut",
+    "dance", "danger", "dark", "daughter", "day", "dead", "deal", "dear", "death", "decide",
+    "deep", "degree", "depend", "design", "desire", "detail", "develop", "device", "did", "die",
+    "dinner", "direct", "direction", "discover", "divide", "do", "doctor", "does", "dog", "dollar",
+    "done", "door", "down", "draw", "dream", "dress", "drink", "drive", "drop", "dry",
+    "during", "dust", "duty", "each", "ear", "early", "earth", "east", "eat", "edge",
+    "effect", "effort", "egg", "eight", "either", "else", "end", "enemy", "engine", "enjoy",
+    "enough", "enter", "equal", "escape", "even", "evening", "event", "ever", "every", "exact",
+    "example", "except", "excite", "exercise", "exist", "expect", "explain", "express", "extend", "extra",
+    "eye", "face", "fact", "factor", "fair", "faith", "fall", "family", "famous", "far",
+    "farm", "fast", "fat", "father", "fear", "feed", "feel", "feet", "fell", "few",
+    "field", "fight", "figure", "fill", "final", "find", "fine", "finger", "finish", "fire",
+    "first", "fish", "five", "flat", "floor", "flower", "fly", "follow", "food", "foot",
+    "for", "force", "forest", "forget", "form", "former", "forward", "found", "four", "free",
+    "fresh", "friend", "from", "front", "fruit", "full", "fun", "game", "garden", "gate",
+    "gather", "gave", "general", "get", "gift", "girl", "give", "glad", "glass", "go",
+    "goat", "gold", "gone", "good", "got", "grand", "grass", "great", "green", "grew",
+    "ground", "group", "grow", "guard", "guess", "guide", "gun", "had", "hair", "half",
+    "hall", "hand", "happen", "happy", "hard", "has", "hat", "have", "he", "head",
+    "hear", "heart", "heat", "heavy", "height", "held", "help", "her", "here", "hidden",
+    "high", "hill", "him", "his", "hit", "hold", "hole", "home", "hope", "horse",
+    "hot", "hotel", "house", "how", "human", "hundred", "hunger", "hunt", "hurry", "hurt",
+    "husband", "ice", "idea", "if", "image", "important", "in", "inch", "include", "indeed",
+    "indicate", "industry", "inform", "insect", "inside", "instead", "interest", "into", "iron", "island",
+    "issue", "it", "item", "its", "itself", "join", "joy", "judge", "jump", "just",
+    "keep", "key", "kind", "king", "knew", "knock", "know", "lake", "land", "large",
+    "last", "late", "laugh", "lay", "lead", "leader", "learn", "least", "leave", "left",
+    "leg", "length", "less", "lesson", "let", "letter", "level", "library", "life", "lift",
+    "light", "like", "likely", "limit", "line", "lion", "liquid", "list", "listen", "little",
+    "live", "locate", "long", "look", "lose", "lot", "love", "low", "luck", "machine",
+    "made", "main", "major", "make", "man", "manner", "many", "map", "march", "mark",
+    "market", "master", "match", "material", "matter", "may", "me", "mean", "meet", "member",
+    "men", "mental", "method", "middle", "might", "mile", "milk", "million", "mind", "mine",
+    "minute", "miss", "mistake", "mix", "modern", "moment", "money", "month", "moon", "moral",
+    "more", "morning", "most", "mother", "motion", "mountain", "mouth", "move", "much", "music",
+    "must", "my", "name", "narrow", "nation", "nature", "near", "neck", "need", "never",
+    "new", "news", "next", "night", "nine", "no", "noise", "none", "nor", "normal",
+    "north", "nose", "not", "nothing", "notice", "now", "number", "object", "observe", "obtain",
+    "occur", "odd", "of", "off", "offer", "office", "official", "often", "oil", "old",
+    "on", "once", "one", "only", "open", "operate", "opinion", "or", "orange", "order",
+    "origin", "other", "our", "out", "outer", "outside", "over", "own", "oxygen", "page",
+    "paint", "pair", "pan", "panel", "paper", "parent", "part", "partner", "party", "pass",
+    "passage", "past", "patient", "pattern", "pay", "people", "per", "perform", "perhaps", "period",
+    "person", "phrase", "picture", "piece", "place", "plan", "planet", "plant", "plate", "play",
+    "please", "pocket", "poem", "point", "police", "poor", "popular", "port", "position", "possible",
+    "pour", "power", "prepare", "present", "press", "pretty", "prevent", "price", "primary", "print",
+    "private", "prize", "problem", "produce", "profit", "program", "promise", "proper", "protect", "prove",
+    "provide", "public", "pull", "pupil", "purchase", "pure", "push", "put", "quality", "quarter",
+    "question", "quick", "quiet", "quite", "race", "radio", "rain", "raise", "ran", "range",
+    "rather", "reach", "read", "ready", "real", "reason", "receive", "record", "red", "regard",
+    "region", "relate", "remain", "remark", "remember", "repeat", "report", "rest", "result", "return",
+    "review", "rich", "ride", "right", "ring", "rise", "river", "road", "rock", "roll",
+    "room", "round", "row", "run", "sad", "safe", "said", "sail", "salt", "same",
+    "sand", "sat", "save", "saw", "say", "scene", "school", "sea", "search", "season",
+    "seat", "second", "section", "see", "seem", "select", "self", "sell", "send", "sense",
+    "sentence", "separate", "serve", "set", "settle", "seven", "several", "shape", "share", "sharp",
+    "she", "shift", "shine", "ship", "shirt", "shoot", "shore", "short", "should", "shoulder",
+    "shout", "show", "shut", "side", "sight", "sign", "signal", "silence", "silver", "simple",
+    "since", "sing", "sister", "sit", "six", "size", "skill", "sleep", "slip", "slow",
+    "small", "smell", "smile", "smoke", "smooth", "snow", "so", "social", "soft", "solid",
+    "solve", "some", "son", "song", "soon", "sorry", "sort", "sound", "source", "south",
+    "space", "speak", "special", "speech", "speed", "spend", "spoke", "spread", "spring", "square",
+    "staff", "stage", "stand", "standard", "star", "start", "station", "status", "stay", "step",
+    "still", "stone", "stop", "store", "storm", "story", "straight", "strange", "stream", "street",
+    "strength", "strike", "string", "strong", "student", "study", "such", "sudden", "sugar", "summer",
+    "sun", "supply", "support", "sure", "surface", "surprise", "sweet", "swim", "symbol", "system",
+    "table", "tail", "take", "talk", "tall", "taste", "teach", "tell", "temple", "ten",
+    "term", "test", "than", "that", "the", "their", "them", "then", "there", "these",
+    "they", "thick", "thin", "thing", "think", "third", "this", "those", "though", "thought",
+    "three", "through", "throw", "tie", "time", "tiny", "title", "to", "today", "together",
+    "told", "tomorrow", "tonight", "too", "top", "topic", "total", "touch", "toward", "town",
+    "trade", "train", "travel", "tree", "trial", "trouble", "truck", "true", "trust", "truth",
+    "try", "turn", "twelve", "twist", "two", "type", "uncle", "under", "unit", "until",
+    "up", "upon", "upper", "us", "use", "usual", "valley", "value", "various", "very",
+    "view", "village", "voice", "volume", "walk", "wall", "want", "war", "warm", "wash",
+    "waste", "watch", "water", "way", "we", "wear", "weather", "week", "well", "went",
+    "were", "west", "what", "wheel", "when", "where", "whether", "which", "while", "white",
+    "who", "whole", "why", "wide", "wife", "wild", "will", "win", "wind", "window",
+    "winter", "wise", "wish", "with", "without", "woman", "wonder", "wood", "word", "work",
+    "world", "worry", "worth", "would", "write", "wrong", "year", "yes", "yet", "you",
+    "young", "your", "zero",
+];
+
+/// Generate a random word salad from the common-words list, respecting the
+/// requested length range.  Uses a simple xorshift PRNG seeded from the
+/// system clock so no extra dependency is needed.
+fn generate_word_salad(length: TextLength) -> String {
+    let min = length.min_chars();
+    let max = length.max_chars();
+
+    // Seed a simple xorshift64 from the clock
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let mut state: u64 = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    if state == 0 { state = 0xDEAD_BEEF; }
+    let mut rng = move || -> u64 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+
+    let mut result = String::new();
+    while result.len() < max {
+        let idx = (rng() as usize) % COMMON_WORDS.len();
+        let word = COMMON_WORDS[idx];
+        if result.is_empty() {
+            result.push_str(word);
+        } else {
+            if result.len() + 1 + word.len() > max {
+                break;
+            }
+            result.push(' ');
+            result.push_str(word);
+        }
+    }
+    // If we didn't reach the minimum (unlikely), pad with short words
+    while result.len() < min {
+        let idx = (rng() as usize) % COMMON_WORDS.len();
+        let word = COMMON_WORDS[idx];
+        if result.len() + 1 + word.len() <= max {
+            result.push(' ');
+            result.push_str(word);
+        } else {
+            break;
+        }
+    }
+    result
+}
+
 fn fetch_text(source: TextSource, length: TextLength) -> String {
     match source {
         TextSource::Wikipedia => fetch_wikipedia_ascii(length).unwrap_or_else(|| TARGET_TEXT.to_string()),
-        TextSource::WordSalad => TARGET_TEXT.to_string(), // placeholder
+        TextSource::WordSalad => generate_word_salad(length),
     }
 }
 
@@ -488,7 +636,7 @@ impl TextSource {
     fn description(self) -> &'static str {
         match self {
             TextSource::Wikipedia => "Fetch a random Wikipedia article summary.\nRequires an internet connection.",
-            TextSource::WordSalad => "Generate a random sequence of common English words.\nNo internet required. (not yet implemented)",
+            TextSource::WordSalad => "Generate a random sequence of common English words.\nNo internet required.",
         }
     }
 }
@@ -2401,5 +2549,24 @@ mod tests {
         // intervals: 100, 150, 150 => avg = 400/3 ≈ 133.3
         let expected_avg = (100.0 + 150.0 + 150.0) / 3.0;
         assert!((left.avg_response_ms - expected_avg).abs() < 1.0);
+    }
+
+    // ── Word salad ────────────────────────────────────────────────────────
+
+    #[test]
+    fn word_salad_respects_length_bounds() {
+        for length in [TextLength::OneLine, TextLength::ShortParagraph, TextLength::Paragraph, TextLength::LongParagraph] {
+            let text = generate_word_salad(length);
+            assert!(text.len() >= length.min_chars(),
+                "word salad too short for {:?}: {} < {}", length, text.len(), length.min_chars());
+            assert!(text.len() <= length.max_chars(),
+                "word salad too long for {:?}: {} > {}", length, text.len(), length.max_chars());
+        }
+    }
+
+    #[test]
+    fn word_salad_only_ascii_lowercase_and_spaces() {
+        let text = generate_word_salad(TextLength::Paragraph);
+        assert!(text.chars().all(|c| c.is_ascii_lowercase() || c == ' '));
     }
 }
