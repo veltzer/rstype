@@ -166,6 +166,114 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     (year, month, days + 1)
 }
 
+// ── Hand classification (standard QWERTY) ─────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Hand {
+    Left,
+    Right,
+}
+
+/// Classify a character as left- or right-hand on a standard QWERTY keyboard.
+/// Returns `None` for space (thumb, ambiguous) or non-typeable characters.
+fn hand_for_char(c: char) -> Option<Hand> {
+    match c.to_ascii_lowercase() {
+        // Left-hand rows
+        '`' | '1' | '2' | '3' | '4' | '5' => Some(Hand::Left),
+        '~' | '!' | '@' | '#' | '$' | '%' => Some(Hand::Left),
+        'q' | 'w' | 'e' | 'r' | 't'       => Some(Hand::Left),
+        'a' | 's' | 'd' | 'f' | 'g'       => Some(Hand::Left),
+        'z' | 'x' | 'c' | 'v' | 'b'       => Some(Hand::Left),
+        // Right-hand rows
+        '6' | '7' | '8' | '9' | '0' | '-' | '=' => Some(Hand::Right),
+        '^' | '&' | '*' | '(' | ')' | '_' | '+' => Some(Hand::Right),
+        'y' | 'u' | 'i' | 'o' | 'p' | '[' | ']' | '\\' => Some(Hand::Right),
+        'h' | 'j' | 'k' | 'l' | ';' | '\'' => Some(Hand::Right),
+        'n' | 'm' | ',' | '.' | '/'        => Some(Hand::Right),
+        '{' | '}' | '|' | ':' | '"' | '<' | '>' | '?' => Some(Hand::Right),
+        _ => None,
+    }
+}
+
+/// Per-hand statistics computed from a finished session.
+#[derive(Debug, Default)]
+struct HandStats {
+    avg_response_ms: f64,
+    total_keys: usize,
+    errors: usize,
+}
+
+impl HandStats {
+    fn error_rate(&self) -> f64 {
+        if self.total_keys == 0 { 0.0 } else { self.errors as f64 / self.total_keys as f64 * 100.0 }
+    }
+}
+
+/// Compute per-hand response times and error rates from a finished session.
+/// Response time for a key = time since previous keystroke.
+/// Error rate = fraction of keys for that hand that were typed incorrectly.
+fn compute_hand_stats(target: &[char], typed: &[char], keystrokes: &[Keystroke]) -> (HandStats, HandStats) {
+    let mut left = HandStats::default();
+    let mut right = HandStats::default();
+    let mut left_total_ms: f64 = 0.0;
+    let mut right_total_ms: f64 = 0.0;
+
+    // Build response times from keystroke offsets (only for Char keystrokes, skip backspace etc.)
+    // Pair each accepted character position with its response time.
+    let mut char_times: Vec<u64> = Vec::new();
+    let mut prev_offset: Option<u64> = None;
+    for ks in keystrokes {
+        // Only count single-character keys (not "Backspace", "Space" maps to ' ')
+        let is_char = ks.typed.len() == 1 || ks.typed == "Space";
+        if is_char {
+            if let Some(prev) = prev_offset {
+                char_times.push(ks.offset_ms.saturating_sub(prev));
+            } else {
+                // First keystroke — no interval to measure
+                char_times.push(0);
+            }
+        }
+        prev_offset = Some(ks.offset_ms);
+    }
+
+    // Walk through target positions and match with char_times
+    let len = target.len().min(typed.len()).min(char_times.len());
+    for i in 0..len {
+        let expected = target[i];
+        let actual = typed[i];
+        let hand = match hand_for_char(expected) {
+            Some(h) => h,
+            None => continue, // skip space / unknown
+        };
+
+        let stats = match hand {
+            Hand::Left  => &mut left,
+            Hand::Right => &mut right,
+        };
+        let total_ms = match hand {
+            Hand::Left  => &mut left_total_ms,
+            Hand::Right => &mut right_total_ms,
+        };
+
+        stats.total_keys += 1;
+        if actual != expected {
+            stats.errors += 1;
+        }
+        // Skip the first character's "interval" (it's 0 / meaningless)
+        if i > 0 {
+            *total_ms += char_times[i] as f64;
+        }
+    }
+
+    // Average response times (exclude first key of each hand since it has no interval)
+    let left_interval_count = if left.total_keys > 1 { left.total_keys - 1 } else { 0 };
+    let right_interval_count = if right.total_keys > 1 { right.total_keys - 1 } else { 0 };
+    left.avg_response_ms = if left_interval_count > 0 { left_total_ms / left_interval_count as f64 } else { 0.0 };
+    right.avg_response_ms = if right_interval_count > 0 { right_total_ms / right_interval_count as f64 } else { 0.0 };
+
+    (left, right)
+}
+
 fn keycode_to_w3c(code: KeyCode) -> String {
     match code {
         KeyCode::Char(' ')       => "Space".to_string(),
@@ -1200,7 +1308,9 @@ fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         Color::Red
     };
 
-    let lines = vec![
+    let (left_stats, right_stats) = compute_hand_stats(&app.target, &app.typed, &app.keystrokes);
+
+    let mut lines = vec![
         Line::from(Span::styled(
             "── Results ──",
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
@@ -1229,14 +1339,83 @@ fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Enter / Space / R  retry same text     N  new text",
-            Style::default().fg(Color::DarkGray),
-        )),
     ];
 
-    let result_rect = centered_rect(36, lines.len() as u16, area);
+    // Hand report
+    if left_stats.total_keys > 0 || right_stats.total_keys > 0 {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "── Hand Report ──",
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+
+        // Header
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:<14}", ""), Style::default()),
+            Span::styled(format!("{:>10}", "Left"), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{:>10}", "Right"), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        ]));
+
+        // Avg response time
+        let left_resp = if left_stats.total_keys > 1 {
+            format!("{:.0} ms", left_stats.avg_response_ms)
+        } else {
+            "—".to_string()
+        };
+        let right_resp = if right_stats.total_keys > 1 {
+            format!("{:.0} ms", right_stats.avg_response_ms)
+        } else {
+            "—".to_string()
+        };
+        lines.push(Line::from(vec![
+            Span::raw(format!("{:<14}", "Avg response")),
+            Span::styled(format!("{:>10}", left_resp), Style::default().fg(Color::White)),
+            Span::styled(format!("{:>10}", right_resp), Style::default().fg(Color::White)),
+        ]));
+
+        // Keys typed
+        lines.push(Line::from(vec![
+            Span::raw(format!("{:<14}", "Keys typed")),
+            Span::styled(format!("{:>10}", left_stats.total_keys), Style::default().fg(Color::White)),
+            Span::styled(format!("{:>10}", right_stats.total_keys), Style::default().fg(Color::White)),
+        ]));
+
+        // Errors
+        lines.push(Line::from(vec![
+            Span::raw(format!("{:<14}", "Errors")),
+            Span::styled(
+                format!("{:>10}", left_stats.errors),
+                Style::default().fg(if left_stats.errors == 0 { Color::Green } else { Color::Red }),
+            ),
+            Span::styled(
+                format!("{:>10}", right_stats.errors),
+                Style::default().fg(if right_stats.errors == 0 { Color::Green } else { Color::Red }),
+            ),
+        ]));
+
+        // Error rate
+        lines.push(Line::from(vec![
+            Span::raw(format!("{:<14}", "Error rate")),
+            Span::styled(
+                format!("{:>9.1}%", left_stats.error_rate()),
+                Style::default().fg(if left_stats.error_rate() < 5.0 { Color::Green } else { Color::Red }),
+            ),
+            Span::styled(
+                format!("{:>9.1}%", right_stats.error_rate()),
+                Style::default().fg(if right_stats.error_rate() < 5.0 { Color::Green } else { Color::Red }),
+            ),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Enter / Space / R  retry same text     N  new text",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let box_width = 52u16;
+    let result_rect = centered_rect(box_width, lines.len() as u16, area);
     frame.render_widget(
         Paragraph::new(lines).alignment(Alignment::Center),
         result_rect,
@@ -1708,5 +1887,102 @@ mod tests {
         let mut app = app_with_text("a", TypingMode::Forward);
         app.on_key(key(KeyCode::Char('a')));
         assert_eq!(app.typing_state, TypingState::Done);
+    }
+
+    // ── Hand classification ───────────────────────────────────────────────
+
+    #[test]
+    fn hand_for_left_keys() {
+        for c in ['q', 'w', 'e', 'r', 't', 'a', 's', 'd', 'f', 'g', 'z', 'x', 'c', 'v', 'b'] {
+            assert_eq!(hand_for_char(c), Some(Hand::Left), "expected Left for '{c}'");
+        }
+    }
+
+    #[test]
+    fn hand_for_right_keys() {
+        for c in ['y', 'u', 'i', 'o', 'p', 'h', 'j', 'k', 'l', 'n', 'm'] {
+            assert_eq!(hand_for_char(c), Some(Hand::Right), "expected Right for '{c}'");
+        }
+    }
+
+    #[test]
+    fn hand_for_space_is_none() {
+        assert_eq!(hand_for_char(' '), None);
+    }
+
+    #[test]
+    fn hand_for_uppercase_same_as_lower() {
+        assert_eq!(hand_for_char('Q'), Some(Hand::Left));
+        assert_eq!(hand_for_char('P'), Some(Hand::Right));
+    }
+
+    #[test]
+    fn hand_stats_all_correct() {
+        // "ash" => a(left) s(left) h(right)
+        let target: Vec<char> = "ash".chars().collect();
+        let typed: Vec<char> = "ash".chars().collect();
+        let keystrokes = vec![
+            Keystroke { typed: "a".into(), offset_ms: 0 },
+            Keystroke { typed: "s".into(), offset_ms: 100 },
+            Keystroke { typed: "h".into(), offset_ms: 250 },
+        ];
+        let (left, right) = compute_hand_stats(&target, &typed, &keystrokes);
+        assert_eq!(left.total_keys, 2);
+        assert_eq!(left.errors, 0);
+        assert_eq!(right.total_keys, 1);
+        assert_eq!(right.errors, 0);
+    }
+
+    #[test]
+    fn hand_stats_with_errors() {
+        // target "ash", typed "xsh" — 'x' for 'a' is a left-hand error
+        let target: Vec<char> = "ash".chars().collect();
+        let typed: Vec<char> = "xsh".chars().collect();
+        let keystrokes = vec![
+            Keystroke { typed: "x".into(), offset_ms: 0 },
+            Keystroke { typed: "s".into(), offset_ms: 100 },
+            Keystroke { typed: "h".into(), offset_ms: 200 },
+        ];
+        let (left, right) = compute_hand_stats(&target, &typed, &keystrokes);
+        assert_eq!(left.total_keys, 2);
+        assert_eq!(left.errors, 1);
+        assert_eq!(right.total_keys, 1);
+        assert_eq!(right.errors, 0);
+        assert!(left.error_rate() > 0.0);
+        assert_eq!(right.error_rate(), 0.0);
+    }
+
+    #[test]
+    fn hand_stats_response_times() {
+        // "ah" => a(left, t=0) h(right, t=200)
+        let target: Vec<char> = "ah".chars().collect();
+        let typed: Vec<char> = "ah".chars().collect();
+        let keystrokes = vec![
+            Keystroke { typed: "a".into(), offset_ms: 0 },
+            Keystroke { typed: "h".into(), offset_ms: 200 },
+        ];
+        let (left, right) = compute_hand_stats(&target, &typed, &keystrokes);
+        // Left has 1 key so no interval avg
+        assert_eq!(left.avg_response_ms, 0.0);
+        // Right has 1 key so no interval avg either
+        assert_eq!(right.avg_response_ms, 0.0);
+    }
+
+    #[test]
+    fn hand_stats_avg_response_with_enough_keys() {
+        // "asdf" => all left: a(t=0) s(t=100) d(t=250) f(t=400)
+        let target: Vec<char> = "asdf".chars().collect();
+        let typed: Vec<char> = "asdf".chars().collect();
+        let keystrokes = vec![
+            Keystroke { typed: "a".into(), offset_ms: 0 },
+            Keystroke { typed: "s".into(), offset_ms: 100 },
+            Keystroke { typed: "d".into(), offset_ms: 250 },
+            Keystroke { typed: "f".into(), offset_ms: 400 },
+        ];
+        let (left, _right) = compute_hand_stats(&target, &typed, &keystrokes);
+        assert_eq!(left.total_keys, 4);
+        // intervals: 100, 150, 150 => avg = 400/3 ≈ 133.3
+        let expected_avg = (100.0 + 150.0 + 150.0) / 3.0;
+        assert!((left.avg_response_ms - expected_avg).abs() < 1.0);
     }
 }
