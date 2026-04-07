@@ -4,7 +4,8 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::{Shell, generate};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
@@ -2532,39 +2533,48 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 #[command(name = "rstype")]
 #[command(about = "Rust based typing trainer")]
 #[command(version)]
+#[command(subcommand_required = true, arg_required_else_help = true)]
 struct Cli {
     #[command(subcommand)]
-    command: Option<Commands>,
-
-    /// Typing mode (overrides config file)
-    #[arg(short, long)]
-    mode: Option<TypingMode>,
-
-    /// Text source (overrides config file)
-    #[arg(short = 's', long)]
-    source: Option<TextSource>,
-
-    /// Text length (overrides config file)
-    #[arg(short = 'l', long)]
-    length: Option<TextLength>,
-
-    /// Minimum terminal columns
-    #[arg(long)]
-    min_cols: Option<u16>,
-
-    /// Minimum terminal rows
-    #[arg(long)]
-    min_rows: Option<u16>,
+    command: Commands,
 }
 
 #[derive(clap::Subcommand)]
 enum Commands {
+    /// Launch the typing trainer TUI
+    Train {
+        /// Typing mode (overrides config file)
+        #[arg(short, long)]
+        mode: Option<TypingMode>,
+
+        /// Text source (overrides config file)
+        #[arg(short = 's', long)]
+        source: Option<TextSource>,
+
+        /// Text length (overrides config file)
+        #[arg(short = 'l', long)]
+        length: Option<TextLength>,
+
+        /// Minimum terminal columns
+        #[arg(long)]
+        min_cols: Option<u16>,
+
+        /// Minimum terminal rows
+        #[arg(long)]
+        min_rows: Option<u16>,
+    },
     /// Collect ~1000 paragraphs from Wikipedia and store them locally for
     /// offline use. Stored in ~/.local/share/rstype/paragraphs.jsonl
     Collect {
         /// Number of paragraphs to collect
         #[arg(short, long, default_value_t = 1000)]
         count: usize,
+    },
+    /// Generate shell completion scripts
+    Complete {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
     },
 }
 
@@ -2573,22 +2583,32 @@ enum Commands {
 fn main() -> io::Result<()> {
     let cli = Cli::parse();
 
-    // Handle subcommands that don't need the TUI
-    if let Some(Commands::Collect { count }) = cli.command {
-        cmd_collect(count);
-        return Ok(());
+    match cli.command {
+        Commands::Collect { count } => {
+            cmd_collect(count);
+            return Ok(());
+        }
+        Commands::Complete { shell } => {
+            let mut cmd = Cli::command();
+            generate(shell, &mut cmd, "rstype", &mut io::stdout());
+            return Ok(());
+        }
+        Commands::Train { mode, source, length, min_cols, min_rows } => {
+            let mut config = load_config();
+
+            // CLI flags override config-file values
+            if let Some(mode) = mode { config.mode = mode; }
+            if let Some(source) = source { config.text_source = source; }
+            if let Some(length) = length { config.text_length = length; }
+            if let Some(min_cols) = min_cols { config.min_cols = min_cols; }
+            if let Some(min_rows) = min_rows { config.min_rows = min_rows; }
+
+            run_tui(config)
+        }
     }
+}
 
-    let mut config = load_config();
-
-    // CLI flags override config-file values
-    if let Some(mode) = cli.mode { config.mode = mode; }
-    if let Some(source) = cli.source { config.text_source = source; }
-    if let Some(length) = cli.length { config.text_length = length; }
-    if let Some(min_cols) = cli.min_cols { config.min_cols = min_cols; }
-    if let Some(min_rows) = cli.min_rows { config.min_rows = min_rows; }
-
-    // Check terminal size before entering raw/alternate mode
+fn run_tui(config: Config) -> io::Result<()> {
     let (cols, rows) = crossterm::terminal::size()?;
     if cols < config.min_cols || rows < config.min_rows {
         eprintln!(
