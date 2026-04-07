@@ -38,3 +38,7 @@ rstype version                       # Show version and build info
 ## Philosophy
 
 Practice-oriented, zero-friction typing training — launch and start typing with minimal setup. Convention over configuration with sensible defaults.
+
+## Author
+
+Mark Veltzer <mark.veltzer@gmail.com>

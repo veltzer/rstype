@@ -80,6 +80,10 @@ rstype complete bash                 # Generate shell completions
 | **Sudden Death** | One mistake resets the entire session immediately |
 | **Blind** | Typed characters are hidden (shown as ·); no visual feedback |
 
+## Author
+
+Mark Veltzer <mark.veltzer@gmail.com>
+
 ## License
 
 MIT
