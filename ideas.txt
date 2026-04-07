@@ -1,1 +1,1 @@
-Do a report about the responsiveness of each hand by counting how fast left side keys on the keyboard are pressed compared to right side. Give an average response time for each hand. This will give me an idea of which hand is faster.
+Do a report about the responsiveness of each hand by counting how fast left side keys on the keyboard are pressed compared to right side. Give an average response time for each hand. This will give me an idea of which hand is faster. We can also give error rate for each hand.
