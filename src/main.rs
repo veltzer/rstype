@@ -2832,6 +2832,8 @@ enum Commands {
         #[command(subcommand)]
         action: DictAction,
     },
+    /// Show detailed version and build information
+    Version,
     /// Generate shell completion scripts
     Complete {
         /// Shell to generate completions for
@@ -2899,6 +2901,17 @@ fn main() -> io::Result<()> {
                 DictAction::Remove { lang } => cmd_dict_remove(&lang),
                 DictAction::Show => cmd_dict_show(),
             }
+            return Ok(());
+        }
+        Commands::Version => {
+            println!("rstype {} by {}", env!("CARGO_PKG_VERSION"), env!("CARGO_PKG_AUTHORS"));
+            println!("GIT_DESCRIBE: {}", env!("GIT_DESCRIBE"));
+            println!("GIT_SHA: {}", env!("GIT_SHA"));
+            println!("GIT_BRANCH: {}", env!("GIT_BRANCH"));
+            println!("GIT_DIRTY: {}", env!("GIT_DIRTY"));
+            println!("RUSTC_SEMVER: {}", env!("RUSTC_SEMVER"));
+            println!("RUST_EDITION: {}", env!("RUST_EDITION"));
+            println!("BUILD_TIMESTAMP: {}", env!("BUILD_TIMESTAMP"));
             return Ok(());
         }
         Commands::Complete { shell } => {
