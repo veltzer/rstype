@@ -1527,34 +1527,40 @@ fn render_stats(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         )));
     }
 
-    // ── Today's totals from history ───────────────────────────────────────
+    // ── All-time totals from history ─────────────────────────────────────
     let stats = load_history_stats();
-    let (year, month) = today_ym();
-    let today_day = {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        let (_, _, d) = days_to_ymd(secs / 86400);
-        d as u32
-    };
-    let date_key = format!("{:04}-{:02}-{:02}", year, month, today_day);
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  Today's totals",
+        "  All-time totals",
         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::from(""));
 
-    if let Some(&(sessions, avg_wpm, words, chars)) = stats.get(&date_key) {
-        lines.push(row("sessions", sessions.to_string(), Color::Yellow));
-        lines.push(row("avg WPM", format!("{:.1}", avg_wpm), Color::Yellow));
-        lines.push(row("total words", words.to_string(), Color::Yellow));
-        lines.push(row("total chars", chars.to_string(), Color::Yellow));
-    } else {
+    if stats.is_empty() {
         lines.push(Line::from(Span::styled(
-            "  No sessions today yet.",
+            "  No sessions recorded yet.",
             Style::default().fg(Color::DarkGray),
         )));
+    } else {
+        let mut total_sessions: usize = 0;
+        let mut total_wpm_sum: f64 = 0.0;
+        let mut total_words: usize = 0;
+        let mut total_chars: usize = 0;
+        let days_practiced = stats.len();
+        for &(sessions, avg_wpm, words, chars) in stats.values() {
+            total_sessions += sessions;
+            total_wpm_sum += avg_wpm * sessions as f64;
+            total_words += words;
+            total_chars += chars;
+        }
+        let overall_avg_wpm = if total_sessions > 0 { total_wpm_sum / total_sessions as f64 } else { 0.0 };
+
+        lines.push(row("sessions", total_sessions.to_string(), Color::Yellow));
+        lines.push(row("days practiced", days_practiced.to_string(), Color::Yellow));
+        lines.push(row("avg WPM", format!("{:.1}", overall_avg_wpm), Color::Yellow));
+        lines.push(row("total words", total_words.to_string(), Color::Yellow));
+        lines.push(row("total chars", total_chars.to_string(), Color::Yellow));
     }
 
     frame.render_widget(Paragraph::new(lines), area);
