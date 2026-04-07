@@ -1142,7 +1142,6 @@ impl App {
                 self.config.text_source = SOURCES[self.config_source_cursor];
                 self.config.text_length = LENGTHS[self.config_length_cursor];
                 save_config(&self.config);
-                self.screen = Screen::Typing;
             }
             _ => {}
         }
