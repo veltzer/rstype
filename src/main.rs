@@ -649,6 +649,17 @@ fn load_history_stats() -> HashMap<String, (usize, f64, usize, usize)> {
     map
 }
 
+/// Load all individual session WPM values from history.
+fn load_all_wpms() -> Vec<f64> {
+    let path = history_path();
+    let Ok(content) = fs::read_to_string(&path) else { return Vec::new(); };
+    content
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|val| val.get("wpm").and_then(|v| v.as_f64()))
+        .collect()
+}
+
 /// Reconstruct the typed characters from a keystroke log.
 fn reconstruct_typed(keystrokes: &[Keystroke]) -> Vec<char> {
     let mut typed = Vec::new();
@@ -2006,6 +2017,21 @@ fn render_stats(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         lines.push(row("sessions", total_sessions.to_string(), Color::Yellow));
         lines.push(row("days practiced", days_practiced.to_string(), Color::Yellow));
         lines.push(row("avg WPM", format!("{:.1}", overall_avg_wpm), Color::Yellow));
+
+        // Min, max, variance from individual session WPMs
+        let wpms = load_all_wpms();
+        if !wpms.is_empty() {
+            let min_wpm = wpms.iter().cloned().fold(f64::INFINITY, f64::min);
+            let max_wpm = wpms.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let mean = wpms.iter().sum::<f64>() / wpms.len() as f64;
+            let variance = wpms.iter().map(|w| (w - mean).powi(2)).sum::<f64>() / wpms.len() as f64;
+            let std_dev = variance.sqrt();
+
+            lines.push(row("min WPM", format!("{:.1}", min_wpm), Color::Red));
+            lines.push(row("max WPM", format!("{:.1}", max_wpm), Color::Green));
+            lines.push(row("std deviation", format!("{:.1}", std_dev), Color::Yellow));
+        }
+
         lines.push(row("total words", total_words.to_string(), Color::Yellow));
         lines.push(row("total chars", total_chars.to_string(), Color::Yellow));
 
