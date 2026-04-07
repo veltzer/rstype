@@ -132,6 +132,10 @@ fn generate_word_salad(length: TextLength) -> String {
     let min = length.min_chars();
     let max = length.max_chars();
 
+    // Use installed dictionary words if available, otherwise fall back to embedded list
+    let dict_words = if cfg!(test) { Vec::new() } else { load_all_dict_words() };
+    let use_dict = !dict_words.is_empty();
+
     // Seed a simple xorshift64 from the clock
     use std::time::{SystemTime, UNIX_EPOCH};
     let mut state: u64 = SystemTime::now()
@@ -146,10 +150,17 @@ fn generate_word_salad(length: TextLength) -> String {
         state
     };
 
+    let pick_word = |rng_val: u64| -> &str {
+        if use_dict {
+            &dict_words[(rng_val as usize) % dict_words.len()]
+        } else {
+            COMMON_WORDS[(rng_val as usize) % COMMON_WORDS.len()]
+        }
+    };
+
     let mut result = String::new();
     while result.len() < max {
-        let idx = (rng() as usize) % COMMON_WORDS.len();
-        let word = COMMON_WORDS[idx];
+        let word = pick_word(rng());
         if result.is_empty() {
             result.push_str(word);
         } else {
@@ -162,8 +173,7 @@ fn generate_word_salad(length: TextLength) -> String {
     }
     // If we didn't reach the minimum (unlikely), pad with short words
     while result.len() < min {
-        let idx = (rng() as usize) % COMMON_WORDS.len();
-        let word = COMMON_WORDS[idx];
+        let word = pick_word(rng());
         if result.len() + 1 + word.len() <= max {
             result.push(' ');
             result.push_str(word);
@@ -463,6 +473,179 @@ fn cmd_wikipedia_clear() {
 fn cmd_wikipedia_show() {
     let path = paragraphs_path();
     println!("{}", path.display());
+}
+
+// ── Dictionary management ────────────────────────────────────────────────────
+
+fn dict_dir() -> PathBuf {
+    let mut p = dirs_home().unwrap_or_else(|| PathBuf::from("."));
+    p.push(".local");
+    p.push("share");
+    p.push("rstype");
+    p.push("dicts");
+    p
+}
+
+/// Load words from an installed dictionary's .dic file.
+/// Returns only lowercase ASCII words (2–10 chars) suitable for word salad.
+fn load_dict_words(lang: &str) -> Vec<String> {
+    let dir = dict_dir();
+    let dic_path = dir.join(format!("{}.dic", lang));
+    let Ok(content) = fs::read_to_string(&dic_path) else { return Vec::new(); };
+    content
+        .lines()
+        .skip(1) // first line is word count
+        .map(|line| {
+            // .dic lines may have affix flags after '/'
+            line.split('/').next().unwrap_or("").trim().to_lowercase()
+        })
+        .filter(|w| {
+            w.len() >= 2
+                && w.len() <= 10
+                && w.chars().all(|c| c.is_ascii_lowercase())
+        })
+        .collect()
+}
+
+/// Load words from all installed dictionaries, deduplicated.
+fn load_all_dict_words() -> Vec<String> {
+    let dir = dict_dir();
+    let Ok(entries) = fs::read_dir(&dir) else { return Vec::new(); };
+    let mut seen = std::collections::HashSet::new();
+    let mut words = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("dic") {
+            if let Some(lang) = path.file_stem().and_then(|s| s.to_str()) {
+                for w in load_dict_words(lang) {
+                    if seen.insert(w.clone()) {
+                        words.push(w);
+                    }
+                }
+            }
+        }
+    }
+    words
+}
+
+fn cmd_dict_show() {
+    println!("{}", dict_dir().display());
+}
+
+fn cmd_dict_list() {
+    let dir = dict_dir();
+    println!("Dictionaries stored in: {}", dir.display());
+    println!();
+
+    let Ok(entries) = fs::read_dir(&dir) else {
+        println!("  (directory does not exist yet)");
+        return;
+    };
+
+    let mut langs: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            if p.extension().and_then(|s| s.to_str()) == Some("dic") {
+                p.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+    langs.sort();
+
+    if langs.is_empty() {
+        println!("  (none installed)");
+    } else {
+        println!("Installed languages:");
+        for lang in &langs {
+            let words = load_dict_words(lang);
+            println!("  {:<12} {} usable words", lang, words.len());
+        }
+    }
+    println!();
+    println!("Embedded fallback: {} words", COMMON_WORDS.len());
+}
+
+fn cmd_dict_list_remote() {
+    let url = "https://api.github.com/repos/wooorm/dictionaries/contents/dictionaries";
+    eprintln!("Fetching available dictionaries from wooorm/dictionaries...");
+
+    let resp = ureq::get(url)
+        .set("User-Agent", "rstype/1.0")
+        .call();
+    let Ok(resp) = resp else {
+        eprintln!("Error: failed to fetch dictionary list.");
+        return;
+    };
+    let Ok(contents) = resp.into_json::<Vec<serde_json::Value>>() else {
+        eprintln!("Error: failed to parse response.");
+        return;
+    };
+
+    let mut langs: Vec<String> = contents
+        .iter()
+        .filter(|item| item.get("type").and_then(|v| v.as_str()) == Some("dir"))
+        .filter_map(|item| item.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .collect();
+    langs.sort();
+
+    println!("Available languages ({}):", langs.len());
+    for lang in &langs {
+        println!("  {}", lang);
+    }
+    println!();
+    println!("Install with: rstype dict install <lang>");
+}
+
+fn cmd_dict_install(lang: &str) {
+    let dir = dict_dir();
+    let _ = fs::create_dir_all(&dir);
+    let lang_normalized = lang.replace('_', "-");
+
+    let dic_url = format!(
+        "https://raw.githubusercontent.com/wooorm/dictionaries/main/dictionaries/{}/index.dic",
+        lang_normalized
+    );
+
+    eprintln!("Downloading dictionary for {}...", lang_normalized);
+
+    let resp = ureq::get(&dic_url)
+        .set("User-Agent", "rstype/1.0")
+        .call();
+    let Ok(resp) = resp else {
+        eprintln!("Error: failed to download .dic file. Check if '{}' exists at https://github.com/wooorm/dictionaries", lang_normalized);
+        return;
+    };
+    let Ok(content) = resp.into_string() else {
+        eprintln!("Error: failed to read response.");
+        return;
+    };
+
+    let dest = dir.join(format!("{}.dic", lang_normalized));
+    if let Err(e) = fs::write(&dest, &content) {
+        eprintln!("Error writing {}: {}", dest.display(), e);
+        return;
+    }
+
+    let words = load_dict_words(&lang_normalized);
+    eprintln!("Installed {} ({} usable words for word salad)", lang_normalized, words.len());
+}
+
+fn cmd_dict_remove(lang: &str) {
+    let dir = dict_dir();
+    let lang_normalized = lang.replace('_', "-");
+    let dic_path = dir.join(format!("{}.dic", lang_normalized));
+
+    if dic_path.exists() {
+        match fs::remove_file(&dic_path) {
+            Ok(()) => eprintln!("Removed {}", lang_normalized),
+            Err(e) => eprintln!("Error removing {}: {}", dic_path.display(), e),
+        }
+    } else {
+        eprintln!("Dictionary '{}' is not installed.", lang_normalized);
+    }
 }
 
 fn save_session(session: &Session) {
@@ -2644,6 +2827,11 @@ enum Commands {
         #[command(subcommand)]
         action: WikipediaAction,
     },
+    /// Manage dictionaries for word salad mode
+    Dict {
+        #[command(subcommand)]
+        action: DictAction,
+    },
     /// Generate shell completion scripts
     Complete {
         /// Shell to generate completions for
@@ -2668,6 +2856,26 @@ enum WikipediaAction {
     Show,
 }
 
+#[derive(clap::Subcommand)]
+enum DictAction {
+    /// List installed dictionaries
+    List,
+    /// List dictionaries available for download
+    ListRemote,
+    /// Install a dictionary (e.g., en-US, de-DE) from wooorm/dictionaries
+    Install {
+        /// Language code to install (e.g., en-US, de-DE, fr)
+        lang: String,
+    },
+    /// Remove an installed dictionary
+    Remove {
+        /// Language code to remove
+        lang: String,
+    },
+    /// Show the path to the dictionaries directory
+    Show,
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() -> io::Result<()> {
@@ -2680,6 +2888,16 @@ fn main() -> io::Result<()> {
                 WikipediaAction::Stats => cmd_wikipedia_stats(),
                 WikipediaAction::Clear => cmd_wikipedia_clear(),
                 WikipediaAction::Show => cmd_wikipedia_show(),
+            }
+            return Ok(());
+        }
+        Commands::Dict { action } => {
+            match action {
+                DictAction::List => cmd_dict_list(),
+                DictAction::ListRemote => cmd_dict_list_remote(),
+                DictAction::Install { lang } => cmd_dict_install(&lang),
+                DictAction::Remove { lang } => cmd_dict_remove(&lang),
+                DictAction::Show => cmd_dict_show(),
             }
             return Ok(());
         }
