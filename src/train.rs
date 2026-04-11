@@ -371,7 +371,16 @@ impl App {
                                     self.last_pressed_key = Some(ch);
                                     self.last_pressed_correct = true;
                                 } else {
-                                    self.restart();
+                                    self.typed.clear();
+                                    self.cursor = 0;
+                                    self.errors = 0;
+                                    self.error_flash = false;
+                                    self.last_pressed_key = None;
+                                    self.last_pressed_correct = false;
+                                    self.typing_state = TypingState::Waiting;
+                                    self.start_time = None;
+                                    self.wpm = 0.0;
+                                    self.keystrokes.clear();
                                     return;
                                 }
                             }
