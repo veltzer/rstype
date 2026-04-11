@@ -371,16 +371,15 @@ impl App {
                                     self.last_pressed_key = Some(ch);
                                     self.last_pressed_correct = true;
                                 } else {
+                                    // Act as if backspaced to the beginning:
+                                    // clear typed text and cursor but keep
+                                    // timer, stats, and keystrokes intact.
                                     self.typed.clear();
                                     self.cursor = 0;
-                                    self.errors = 0;
-                                    self.error_flash = false;
-                                    self.last_pressed_key = None;
+                                    self.errors += 1;
+                                    self.error_flash = true;
+                                    self.last_pressed_key = Some(ch);
                                     self.last_pressed_correct = false;
-                                    self.typing_state = TypingState::Waiting;
-                                    self.start_time = None;
-                                    self.wpm = 0.0;
-                                    self.keystrokes.clear();
                                     return;
                                 }
                             }
@@ -870,10 +869,14 @@ mod tests {
     #[test]
     fn sudden_death_resets_on_wrong_key() {
         let mut app = app_with_text("abc", TypingMode::SuddenDeath);
-        app.on_key(key(KeyCode::Char('a'))); // correct
-        app.on_key(key(KeyCode::Char('x'))); // wrong — should reset
+        app.on_key(key(KeyCode::Char('a'))); // correct — starts timer
+        assert_eq!(app.typing_state, TypingState::Typing);
+        app.on_key(key(KeyCode::Char('x'))); // wrong — resets cursor but keeps state
         assert_eq!(app.cursor, 0);
-        assert_eq!(app.typing_state, TypingState::Waiting);
+        assert_eq!(app.typed.len(), 0);
+        assert_eq!(app.typing_state, TypingState::Typing);
+        assert!(app.start_time.is_some());
+        assert_eq!(app.errors, 1);
     }
 
     #[test]

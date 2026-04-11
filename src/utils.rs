@@ -261,7 +261,7 @@ impl TypingMode {
             TypingMode::Forward     => "Wrong key advances the cursor. The mistake is marked in red.\nSpeed matters more than accuracy.",
             TypingMode::Stop        => "Wrong key is blocked — cursor stays put until you press\nthe right key. No mistakes recorded.",
             TypingMode::Correct     => "Wrong key advances but is marked in red. Backspace works.\nYou cannot finish until every character is correct.",
-            TypingMode::SuddenDeath => "One wrong key resets the session immediately.\nPerfect accuracy is required to finish.",
+            TypingMode::SuddenDeath => "One wrong key sends you back to the start of the text.\nThe clock keeps running. Perfect accuracy required to finish.",
             TypingMode::Blind       => "Typed characters are hidden as ·. No red/green feedback.\nTrust your muscle memory.",
         }
     }
