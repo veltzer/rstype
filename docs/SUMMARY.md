@@ -7,6 +7,7 @@
 - [Keyboard Shortcuts](shortcuts.md)
 - [Status Bar](status_bar.md)
 - [Minimum Real Estate](minimum_real_estate.md)
+- [Future Mode Ideas](future_mode_ideas.md)
 
 ## Maintainer Guide
 
