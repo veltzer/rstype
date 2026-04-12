@@ -14,7 +14,7 @@ use crossterm::event::{self, Event};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::utils::{Config, load_config, TypingMode, TextSource, TextLength};
+use crate::utils::{Config, load_config, TypingMode, TextSource, TextLength, history_path, load_history_stats};
 use crate::train::App;
 use crate::ui::render;
 use crate::wikipedia::{cmd_collect, cmd_wikipedia_stats, cmd_wikipedia_clear, cmd_wikipedia_show};
@@ -64,6 +64,11 @@ enum Commands {
         #[command(subcommand)]
         action: DictAction,
     },
+    /// Manage typing session statistics
+    Stats {
+        #[command(subcommand)]
+        action: StatsAction,
+    },
     /// Show detailed version and build information
     Version,
     /// Generate shell completion scripts
@@ -88,6 +93,14 @@ enum WikipediaAction {
     Clear,
     /// Show the file path where Wikipedia paragraphs are stored
     Show,
+}
+
+#[derive(clap::Subcommand)]
+enum StatsAction {
+    /// Show typing session statistics
+    Show,
+    /// Clear all typing session history
+    Clear,
 }
 
 #[derive(clap::Subcommand)]
@@ -133,6 +146,13 @@ fn main() -> io::Result<()> {
             }
             Ok(())
         }
+        Commands::Stats { action } => {
+            match action {
+                StatsAction::Show => cmd_stats_show(),
+                StatsAction::Clear => cmd_stats_clear(),
+            }
+            Ok(())
+        }
         Commands::Version => {
             println!("rstype {} by {}", env!("CARGO_PKG_VERSION"), env!("CARGO_PKG_AUTHORS"));
             println!("GIT_DESCRIBE: {}", env!("GIT_DESCRIBE"));
@@ -160,6 +180,73 @@ fn main() -> io::Result<()> {
 
             run_tui(config)
         }
+    }
+}
+
+fn cmd_stats_show() {
+    let path = history_path();
+    if !path.exists() {
+        eprintln!("No session history found at {}", path.display());
+        return;
+    }
+    let stats = load_history_stats();
+    if stats.is_empty() {
+        eprintln!("No session history found at {}", path.display());
+        return;
+    }
+    let total_sessions: usize = stats.values().map(|v| v.0).sum();
+    let total_words: usize = stats.values().map(|v| v.2).sum();
+    let total_chars: usize = stats.values().map(|v| v.3).sum();
+    let overall_avg_wpm: f64 = if total_sessions > 0 {
+        stats.values().map(|v| v.1 * v.0 as f64).sum::<f64>() / total_sessions as f64
+    } else {
+        0.0
+    };
+    let mut dates: Vec<&String> = stats.keys().collect();
+    dates.sort();
+    let first_date = dates.first().map(|s| s.as_str()).unwrap_or("N/A");
+    let last_date = dates.last().map(|s| s.as_str()).unwrap_or("N/A");
+
+    if let Ok(meta) = std::fs::metadata(&path) {
+        let size = meta.len();
+        let (size_val, size_unit) = if size >= 1_048_576 {
+            (size as f64 / 1_048_576.0, "MiB")
+        } else {
+            (size as f64 / 1024.0, "KiB")
+        };
+        eprintln!("History file:    {} ({:.1} {})", path.display(), size_val, size_unit);
+    } else {
+        eprintln!("History file:    {}", path.display());
+    }
+    eprintln!("Days practiced:  {}", dates.len());
+    eprintln!("First session:   {}", first_date);
+    eprintln!("Last session:    {}", last_date);
+    eprintln!("Total sessions:  {}", total_sessions);
+    eprintln!("Total words:     {}", total_words);
+    eprintln!("Total chars:     {}", total_chars);
+    eprintln!("Average WPM:     {:.1}", overall_avg_wpm);
+}
+
+fn cmd_stats_clear() {
+    let path = history_path();
+    if !path.exists() {
+        eprintln!("Nothing to delete — no history found at {}", path.display());
+        return;
+    }
+    eprint!("This will permanently delete all session history. Are you sure? [y/N] ");
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        eprintln!("Failed to read input");
+        return;
+    }
+    let answer = input.trim().to_lowercase();
+    if answer == "y" || answer == "yes" {
+        match std::fs::remove_file(&path) {
+            Ok(()) => eprintln!("Deleted {}", path.display()),
+            Err(e) => eprintln!("Error deleting {}: {}", path.display(), e),
+        }
+    } else {
+        eprintln!("Aborted.");
     }
 }
 
