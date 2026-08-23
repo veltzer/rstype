@@ -118,12 +118,12 @@ impl App {
     }
 
     pub fn poll_fetch(&mut self) {
-        if let Some(rx) = &self.fetch_rx {
-            if let Ok(text) = rx.try_recv() {
-                self.target = text.chars().collect();
-                self.fetching = false;
-                self.fetch_rx = None;
-            }
+        if let Some(rx) = &self.fetch_rx
+            && let Ok(text) = rx.try_recv()
+        {
+            self.target = text.chars().collect();
+            self.fetching = false;
+            self.fetch_rx = None;
         }
     }
 
@@ -521,12 +521,11 @@ pub fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let viewport_h = area.height.saturating_sub(reserved) as usize;
     let viewport_h = viewport_h.max(1);
 
-    let scroll_top = if cursor_line < viewport_h / 2 { 0 } else { cursor_line - viewport_h / 2 };
+    let scroll_top = cursor_line.saturating_sub(viewport_h / 2);
     let view_y = area.y;
     for (row, &(start, end)) in lines_ranges.iter().enumerate().skip(scroll_top).take(viewport_h) {
         let mut spans: Vec<Span> = Vec::new();
-        for i in start..end {
-            let ch = text[i];
+        for (i, &ch) in text.iter().enumerate().take(end).skip(start) {
             let span = if i < app.cursor {
                 if blind {
                     Span::styled("·", Style::default().fg(Color::DarkGray))
@@ -806,8 +805,7 @@ mod tests {
     }
 
     fn app_with_text(text: &str, mode: TypingMode) -> App {
-        let mut config = Config::default();
-        config.mode = mode;
+        let config = Config { mode, ..Default::default() };
         let mut app = App::new(config);
         app.target = text.chars().collect();
         app.typed = Vec::new();

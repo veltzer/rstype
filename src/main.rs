@@ -273,14 +273,14 @@ fn run_tui(config: Config) -> io::Result<()> {
         app.poll_wiki_collect();
         render(&mut terminal, &app)?;
 
-        if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                if app.on_key(key) {
-                    break;
-                }
-                app.error_flash = false;
-                app.last_pressed_key = None;
+        if event::poll(Duration::from_millis(50))?
+            && let Event::Key(key) = event::read()?
+        {
+            if app.on_key(key) {
+                break;
             }
+            app.error_flash = false;
+            app.last_pressed_key = None;
         }
     }
 

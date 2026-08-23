@@ -1,11 +1,11 @@
 [book]
 authors = ["Mark Veltzer <mark.veltzer@gmail.com>"]
 language = "en"
-src = "docs"
+src = "src"
 title = "RSType - Rust Typing Trainer"
 
 [build]
-build-dir = "_site"
+build-dir = "book"
 
 [output.html]
 default-theme = "rust"

@@ -139,12 +139,12 @@ pub fn load_all_dict_words() -> Vec<String> {
     let mut words = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("dic") {
-            if let Some(lang) = path.file_stem().and_then(|s| s.to_str()) {
-                for w in load_dict_words(lang) {
-                    if seen.insert(w.clone()) {
-                        words.push(w);
-                    }
+        if path.extension().and_then(|s| s.to_str()) == Some("dic")
+            && let Some(lang) = path.file_stem().and_then(|s| s.to_str())
+        {
+            for w in load_dict_words(lang) {
+                if seen.insert(w.clone()) {
+                    words.push(w);
                 }
             }
         }

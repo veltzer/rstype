@@ -132,7 +132,7 @@ fn render_calendar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 
     for slot in 0..total_slots {
         let col = slot % 7;
-        let day_num = slot as i32 - first_dow as i32 + 1;
+        let day_num = slot - first_dow as i32 + 1;
 
         if day_num < 1 || day_num > num_days as i32 {
             day_spans.push(Span::raw(format!("{:<CELL$}", "")));
@@ -242,7 +242,7 @@ fn render_wikipedia(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                 if plen >= min && plen <= max { return true; }
                 if plen > max {
                     let trimmed: String = p.chars().take(max).collect();
-                    if let Some(pos) = trimmed.rfind(|c: char| c == '.' || c == '?' || c == '!') {
+                    if let Some(pos) = trimmed.rfind(['.', '?', '!']) {
                         return trimmed[..=pos].trim().len() >= min;
                     }
                 }

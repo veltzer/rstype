@@ -13,3 +13,4 @@
 
 - [History Recording](history_recording.md)
 - [CI/CD & Deployment](maintainer_cicd.md)
+- [Release Info](release-info.md)

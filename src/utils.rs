@@ -62,13 +62,13 @@ pub fn now_timestamp() -> String {
 pub fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     let mut year = 1970u64;
     loop {
-        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
         let days_in_year = if leap { 366 } else { 365 };
         if days < days_in_year { break; }
         days -= days_in_year;
         year += 1;
     }
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
     let month_days = [31u64, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut month = 1u64;
     for &md in &month_days {
@@ -162,8 +162,8 @@ pub fn compute_hand_stats(target: &[char], typed: &[char], keystrokes: &[Keystro
         }
     }
 
-    let left_interval_count = if left.total_keys > 1 { left.total_keys - 1 } else { 0 };
-    let right_interval_count = if right.total_keys > 1 { right.total_keys - 1 } else { 0 };
+    let left_interval_count = left.total_keys.saturating_sub(1);
+    let right_interval_count = right.total_keys.saturating_sub(1);
     left.avg_response_ms = if left_interval_count > 0 { left_total_ms / left_interval_count as f64 } else { 0.0 };
     right.avg_response_ms = if right_interval_count > 0 { right_total_ms / right_interval_count as f64 } else { 0.0 };
 
@@ -420,10 +420,10 @@ pub fn save_session(session: &Session) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
-        if let Ok(line) = serde_json::to_string(session) {
-            let _ = writeln!(file, "{}", line);
-        }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path)
+        && let Ok(line) = serde_json::to_string(session)
+    {
+        let _ = writeln!(file, "{}", line);
     }
 }
 
@@ -432,26 +432,26 @@ pub fn load_history_stats() -> HashMap<String, (usize, f64, usize, usize)> {
     let path = history_path();
     let Ok(content) = fs::read_to_string(&path) else { return map; };
     for line in content.lines() {
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-            if let (Some(ts), Some(wpm)) = (
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line)
+            && let (Some(ts), Some(wpm)) = (
                 val.get("timestamp").and_then(|v| v.as_str()),
                 val.get("wpm").and_then(|v| v.as_f64()),
-            ) {
-                let date_key = ts.get(..10).unwrap_or("").to_string();
-                if date_key.len() == 10 {
-                    let text = val.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                    let chars = text.chars().count();
-                    let words = text.split_whitespace().count();
-                    let entry = map.entry(date_key).or_insert((0, 0.0, 0, 0));
-                    entry.0 += 1;
-                    entry.1 += wpm;
-                    entry.2 += words;
-                    entry.3 += chars;
-                }
+            )
+        {
+            let date_key = ts.get(..10).unwrap_or("").to_string();
+            if date_key.len() == 10 {
+                let text = val.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                let chars = text.chars().count();
+                let words = text.split_whitespace().count();
+                let entry = map.entry(date_key).or_insert((0, 0.0, 0, 0));
+                entry.0 += 1;
+                entry.1 += wpm;
+                entry.2 += words;
+                entry.3 += chars;
             }
         }
     }
-    for (_, v) in map.iter_mut() {
+    for v in map.values_mut() {
         v.1 /= v.0 as f64;
     }
     map

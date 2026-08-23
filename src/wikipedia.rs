@@ -48,7 +48,7 @@ pub fn pick_collected_paragraph(length: TextLength) -> Option<String> {
             .filter(|p| p.len() >= min)
             .filter_map(|p| {
                 let trimmed: String = p.chars().take(max).collect();
-                if let Some(pos) = trimmed.rfind(|c: char| c == '.' || c == '?' || c == '!') {
+                if let Some(pos) = trimmed.rfind(['.', '?', '!']) {
                     let snapped = trimmed[..=pos].trim().to_string();
                     if snapped.len() >= min { Some(snapped) } else { None }
                 } else {
@@ -176,7 +176,7 @@ pub fn cmd_wikipedia_stats() {
             if plen >= min && plen <= max { return true; }
             if plen > max {
                 let trimmed: String = p.chars().take(max).collect();
-                if let Some(pos) = trimmed.rfind(|c: char| c == '.' || c == '?' || c == '!') {
+                if let Some(pos) = trimmed.rfind(['.', '?', '!']) {
                     return trimmed[..=pos].trim().len() >= min;
                 }
             }

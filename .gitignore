@@ -1,4 +1,4 @@
 /target/
 
 # mdBook build output
-/_site/
+/docs/book/
