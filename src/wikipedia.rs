@@ -1,7 +1,7 @@
+use crate::utils::{TextLength, paragraphs_path};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::time::Duration;
-use crate::utils::{paragraphs_path, TextLength};
 
 pub enum WikiCollectMsg {
     Progress(usize, u32),
@@ -10,17 +10,25 @@ pub enum WikiCollectMsg {
 
 pub fn load_paragraphs() -> Vec<String> {
     let path = paragraphs_path();
-    let Ok(content) = fs::read_to_string(&path) else { return Vec::new(); };
+    let Ok(content) = fs::read_to_string(&path) else {
+        return Vec::new();
+    };
     content
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter_map(|val| val.get("text").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .filter_map(|val| {
+            val.get("text")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
         .collect()
 }
 
 pub fn pick_collected_paragraph(length: TextLength) -> Option<String> {
     let paragraphs = load_paragraphs();
-    if paragraphs.is_empty() { return None; }
+    if paragraphs.is_empty() {
+        return None;
+    }
     let min = length.min_chars();
     let max = length.max_chars();
 
@@ -29,7 +37,9 @@ pub fn pick_collected_paragraph(length: TextLength) -> Option<String> {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64;
-    if state == 0 { state = 0xDEAD_BEEF; }
+    if state == 0 {
+        state = 0xDEAD_BEEF;
+    }
     let mut rng = move || -> u64 {
         state ^= state << 13;
         state ^= state >> 7;
@@ -50,13 +60,19 @@ pub fn pick_collected_paragraph(length: TextLength) -> Option<String> {
                 let trimmed: String = p.chars().take(max).collect();
                 if let Some(pos) = trimmed.rfind(['.', '?', '!']) {
                     let snapped = trimmed[..=pos].trim().to_string();
-                    if snapped.len() >= min { Some(snapped) } else { None }
+                    if snapped.len() >= min {
+                        Some(snapped)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
             })
             .collect();
-        if trimmable.is_empty() { return None; }
+        if trimmable.is_empty() {
+            return None;
+        }
         let idx = (rng() as usize) % trimmable.len();
         return Some(trimmable[idx].clone());
     }
@@ -77,9 +93,17 @@ pub fn fetch_wikipedia_paragraphs_batch() -> Vec<String> {
         .query("format", "json")
         .set("User-Agent", "rstype/1.0 (typing trainer)")
         .call();
-    let Ok(resp) = resp else { return Vec::new(); };
-    let Ok(json) = resp.into_json::<serde_json::Value>() else { return Vec::new(); };
-    let Some(pages) = json.get("query").and_then(|q| q.get("pages")).and_then(|p| p.as_object()) else {
+    let Ok(resp) = resp else {
+        return Vec::new();
+    };
+    let Ok(json) = resp.into_json::<serde_json::Value>() else {
+        return Vec::new();
+    };
+    let Some(pages) = json
+        .get("query")
+        .and_then(|q| q.get("pages"))
+        .and_then(|p| p.as_object())
+    else {
         return Vec::new();
     };
 
@@ -88,8 +112,13 @@ pub fn fetch_wikipedia_paragraphs_batch() -> Vec<String> {
         let extract = page.get("extract").and_then(|v| v.as_str()).unwrap_or("");
         for para in extract.split('\n') {
             let trimmed = para.trim();
-            if trimmed.len() < 30 { continue; }
-            if trimmed.chars().all(|c| c.is_ascii() && c >= ' ' && c != '\x7f') {
+            if trimmed.len() < 30 {
+                continue;
+            }
+            if trimmed
+                .chars()
+                .all(|c| c.is_ascii() && c >= ' ' && c != '\x7f')
+            {
                 results.push(trimmed.to_string());
             }
         }
@@ -99,14 +128,21 @@ pub fn fetch_wikipedia_paragraphs_batch() -> Vec<String> {
 
 pub fn cmd_collect(target_count: usize) {
     let path = paragraphs_path();
-    if let Some(parent) = path.parent() { let _ = fs::create_dir_all(parent); }
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
 
     let existing = load_paragraphs();
     let mut seen: std::collections::HashSet<String> = existing.into_iter().collect();
     let initial = seen.len();
 
-    eprintln!("Collecting paragraphs from Wikipedia (target: {})...", target_count);
-    if initial > 0 { eprintln!("  {} paragraphs already collected", initial); }
+    eprintln!(
+        "Collecting paragraphs from Wikipedia (target: {})...",
+        target_count
+    );
+    if initial > 0 {
+        eprintln!("  {} paragraphs already collected", initial);
+    }
 
     let mut file = OpenOptions::new()
         .create(true)
@@ -121,16 +157,23 @@ pub fn cmd_collect(target_count: usize) {
         let batch = fetch_wikipedia_paragraphs_batch();
         let mut added = 0usize;
         for para in batch {
-            if seen.contains(&para) { continue; }
+            if seen.contains(&para) {
+                continue;
+            }
             seen.insert(para.clone());
             if let Ok(json) = serde_json::to_string(&serde_json::json!({ "text": para })) {
                 let _ = writeln!(file, "{}", json);
                 total += 1;
                 added += 1;
             }
-            if total >= target_count { break; }
+            if total >= target_count {
+                break;
+            }
         }
-        eprint!("\r  request {} — {} paragraphs collected ({} new this batch)   ", requests, total, added);
+        eprint!(
+            "\r  request {} — {} paragraphs collected ({} new this batch)   ",
+            requests, total, added
+        );
         std::thread::sleep(Duration::from_millis(100));
     }
     eprintln!();
@@ -149,14 +192,19 @@ pub fn cmd_wikipedia_stats() {
 
     let total = paragraphs.len();
     let total_chars: usize = paragraphs.iter().map(|p| p.len()).sum();
-    let total_words: usize = paragraphs.iter().map(|p| p.split_whitespace().count()).sum();
+    let total_words: usize = paragraphs
+        .iter()
+        .map(|p| p.split_whitespace().count())
+        .sum();
     let avg_len = total_chars as f64 / total as f64;
     let min_len = paragraphs.iter().map(|p| p.len()).min().unwrap_or(0);
     let max_len = paragraphs.iter().map(|p| p.len()).max().unwrap_or(0);
 
     println!("Wikipedia collection");
     println!("  file:             {}", path.display());
-    if let Ok(meta) = fs::metadata(&path) { println!("  file size:        {:.0} KB", meta.len() as f64 / 1024.0); }
+    if let Ok(meta) = fs::metadata(&path) {
+        println!("  file size:        {:.0} KB", meta.len() as f64 / 1024.0);
+    }
     println!();
     println!("  total paragraphs: {}", total);
     println!("  total characters: {}", total_chars);
@@ -167,21 +215,31 @@ pub fn cmd_wikipedia_stats() {
 
     println!();
     println!("Usable paragraphs by length:");
-    let lengths = [TextLength::OneLine, TextLength::ShortParagraph, TextLength::Paragraph, TextLength::LongParagraph];
+    let lengths = [
+        TextLength::OneLine,
+        TextLength::ShortParagraph,
+        TextLength::Paragraph,
+        TextLength::LongParagraph,
+    ];
     for len in &lengths {
         let min = len.min_chars();
         let max = len.max_chars();
-        let count = paragraphs.iter().filter(|p| {
-            let plen = p.len();
-            if plen >= min && plen <= max { return true; }
-            if plen > max {
-                let trimmed: String = p.chars().take(max).collect();
-                if let Some(pos) = trimmed.rfind(['.', '?', '!']) {
-                    return trimmed[..=pos].trim().len() >= min;
+        let count = paragraphs
+            .iter()
+            .filter(|p| {
+                let plen = p.len();
+                if plen >= min && plen <= max {
+                    return true;
                 }
-            }
-            false
-        }).count();
+                if plen > max {
+                    let trimmed: String = p.chars().take(max).collect();
+                    if let Some(pos) = trimmed.rfind(['.', '?', '!']) {
+                        return trimmed[..=pos].trim().len() >= min;
+                    }
+                }
+                false
+            })
+            .count();
         println!("  {:<18} {}", len.label(), count);
     }
 }
@@ -194,7 +252,10 @@ pub fn cmd_wikipedia_clear() {
             Err(e) => eprintln!("Error deleting {}: {}", path.display(), e),
         }
     } else {
-        eprintln!("Nothing to delete — no collection found at {}", path.display());
+        eprintln!(
+            "Nothing to delete — no collection found at {}",
+            path.display()
+        );
     }
 }
 

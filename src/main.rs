@@ -1,24 +1,30 @@
-mod utils;
-mod wikipedia;
 mod dict;
 mod train;
 mod ui;
+mod utils;
+mod wikipedia;
 
-use std::io;
-use std::time::Duration;
-use clap::{Parser, CommandFactory};
+use clap::{CommandFactory, Parser};
 use clap_complete::{Shell, generate};
 use crossterm::ExecutableCommand;
-use crossterm::terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::event::{self, Event};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use std::io;
+use std::time::Duration;
 
-use crate::utils::{Config, load_config, TypingMode, TextSource, TextLength, history_path, load_history_stats};
+use crate::dict::{
+    cmd_dict_install, cmd_dict_list, cmd_dict_list_remote, cmd_dict_remove, cmd_dict_show,
+};
 use crate::train::App;
 use crate::ui::render;
-use crate::wikipedia::{cmd_collect, cmd_wikipedia_stats, cmd_wikipedia_clear, cmd_wikipedia_show};
-use crate::dict::{cmd_dict_list, cmd_dict_list_remote, cmd_dict_install, cmd_dict_remove, cmd_dict_show};
+use crate::utils::{
+    Config, TextLength, TextSource, TypingMode, history_path, load_config, load_history_stats,
+};
+use crate::wikipedia::{cmd_collect, cmd_wikipedia_clear, cmd_wikipedia_show, cmd_wikipedia_stats};
 
 #[derive(Parser)]
 #[command(name = "rstype")]
@@ -154,7 +160,11 @@ fn main() -> io::Result<()> {
             Ok(())
         }
         Commands::Version => {
-            println!("rstype {} by {}", env!("CARGO_PKG_VERSION"), env!("CARGO_PKG_AUTHORS"));
+            println!(
+                "rstype {} by {}",
+                env!("CARGO_PKG_VERSION"),
+                env!("CARGO_PKG_AUTHORS")
+            );
             println!("GIT_DESCRIBE: {}", env!("GIT_DESCRIBE"));
             println!("GIT_SHA: {}", env!("GIT_SHA"));
             println!("GIT_BRANCH: {}", env!("GIT_BRANCH"));
@@ -169,14 +179,30 @@ fn main() -> io::Result<()> {
             generate(shell, &mut cmd, "rstype", &mut io::stdout());
             Ok(())
         }
-        Commands::Train { mode, source, length, min_cols, min_rows } => {
+        Commands::Train {
+            mode,
+            source,
+            length,
+            min_cols,
+            min_rows,
+        } => {
             let mut config = load_config();
 
-            if let Some(mode) = mode { config.mode = mode; }
-            if let Some(source) = source { config.text_source = source; }
-            if let Some(length) = length { config.text_length = length; }
-            if let Some(min_cols) = min_cols { config.min_cols = min_cols; }
-            if let Some(min_rows) = min_rows { config.min_rows = min_rows; }
+            if let Some(mode) = mode {
+                config.mode = mode;
+            }
+            if let Some(source) = source {
+                config.text_source = source;
+            }
+            if let Some(length) = length {
+                config.text_length = length;
+            }
+            if let Some(min_cols) = min_cols {
+                config.min_cols = min_cols;
+            }
+            if let Some(min_rows) = min_rows {
+                config.min_rows = min_rows;
+            }
 
             run_tui(config)
         }
@@ -214,7 +240,12 @@ fn cmd_stats_show() {
         } else {
             (size as f64 / 1024.0, "KiB")
         };
-        eprintln!("History file:    {} ({:.1} {})", path.display(), size_val, size_unit);
+        eprintln!(
+            "History file:    {} ({:.1} {})",
+            path.display(),
+            size_val,
+            size_unit
+        );
     } else {
         eprintln!("History file:    {}", path.display());
     }
