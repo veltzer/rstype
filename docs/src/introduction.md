@@ -13,7 +13,7 @@ A fast, terminal-based typing trainer written in Rust with multiple typing modes
 - **In-app configuration** — switch modes and settings from the Config screen
 - **TUI interface** — clean terminal UI built with Ratatui, with toolbar and status bar
 - **Shell completions** — generate completions for Bash, Zsh, Fish, PowerShell, and Elvish
-- **Cross-platform** — builds for Linux (x86_64, aarch64), macOS, and Windows
+- **Cross-platform** — builds for Linux and macOS (x86_64 and aarch64)
 
 ## Quick Start
 
