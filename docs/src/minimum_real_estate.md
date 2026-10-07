@@ -22,7 +22,7 @@ as `min_cols` and `min_rows`.
 
 ## Overall minimum (most demanding screen: Calendar)
 
-```
+```text
 min_cols = 76    # 74 (calendar box) + 2 side margin
 min_rows = 26    # 23 (calendar box) + 2 (toolbar + statusbar) + 1 top/bottom margin
 ```
@@ -42,7 +42,7 @@ min_rows = 26
 On startup, the app queries the terminal size. If either dimension is below the
 configured minimum, it prints an error to stderr and exits with code 1:
 
-```
+```text
 Error: terminal too small (current: 60×20, required: 76×26)
 ```
 

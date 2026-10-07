@@ -27,8 +27,8 @@ Releases are triggered by pushing a version tag (e.g., `v0.2.1`).
 
 ### Release Strategy
 - **Platform Support**: The workflow builds for:
-  - Linux (x86_64, aarch64)
-  - macOS (x86_64, aarch64)
+    - Linux (x86_64, aarch64)
+    - macOS (x86_64, aarch64)
 - **Automated Assets**: Binaries are automatically renamed with platform
   suffixes and attached to the GitHub Release.
 - **Notes Generation**: Release notes are automatically generated based on

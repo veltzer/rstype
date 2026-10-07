@@ -12,7 +12,7 @@ screens. It is always visible and provides authorship and branding information.
 The status bar occupies the last row of the terminal (`area.height - 1`). The
 usable body area (toolbar to status bar) is therefore `area.height - 2` rows.
 
-```
+```text
 ┌─────────────────────────────────────┐  ← row 0: toolbar
 │                                     │
 │           body content              │
@@ -24,7 +24,7 @@ usable body area (toolbar to status bar) is therefore `area.height - 2` rows.
 
 ## Content
 
-```
+```text
 rstype by Mark Veltzer <mark.veltzer@gmail.com>
 ```
 

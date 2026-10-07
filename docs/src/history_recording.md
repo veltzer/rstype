@@ -10,7 +10,7 @@ without any in-app reporting UI.
 
 ## File location
 
-```
+```text
 ~/.local/share/rstype/history.jsonl
 ```
 
