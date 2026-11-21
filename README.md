@@ -17,13 +17,13 @@ Full documentation: https://veltzer.github.io/rstype/
 - **In-app configuration** — switch modes and settings from the Config screen
 - **TUI interface** — clean terminal UI built with Ratatui, with toolbar and status bar
 - **Shell completions** — generate completions for Bash, Zsh, Fish, PowerShell, and Elvish
-- **Cross-platform** — builds for Linux and macOS (x86_64 and aarch64)
+- **Linux** — builds for x86_64 and aarch64
 
 ## Installation
 
 ### Download pre-built binary (Linux)
 
-Pre-built binaries are available for Linux and macOS (x86_64 and aarch64).
+Pre-built binaries are available for Linux (x86_64 and aarch64).
 
 ```bash
 # Linux x86_64

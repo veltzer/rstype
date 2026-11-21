@@ -7,7 +7,6 @@ Findings from a code scan on 2026-10-04.
 - `src/wikipedia.rs:155` - `cmd_collect` loops `while total < target_count` with no exit on failure; `fetch_wikipedia_paragraphs_batch` (line 96) returns an empty vec on any network/JSON error, so `rstype wikipedia download` offline spins forever every 100 ms. Return a `Result` from the fetch and abort after repeated failures or empty batches.
 - `src/main.rs:302` - any `?` error from `render`, `event::poll` or `event::read` (and any panic) returns before `disable_raw_mode`/`LeaveAlternateScreen` at lines 318-319, leaving the user's terminal in raw mode on the alternate screen; restore the terminal in a guard/`Drop` (or `ratatui::init`/`restore`) and a panic hook.
 - `_site/index.html:1` - the whole `_site/` mdBook output (about 50 files) is committed although `.gitignore:218` ignores `/_site/` and CI builds the book from `docs/` into `docs/book` (`.github/workflows/ci.yml:213`); it is stale (no page for `docs/src/release-info.md`). `git rm -r --cached _site`.
-- `README.md:43` - claims builds for Windows, and line 49 says pre-built binaries exist for "Linux, macOS, and Windows", but the release matrix in `.github/workflows/ci.yml:145-155` builds only Linux and macOS targets; drop Windows from the README (and list the macOS download names, which the install section omits).
 
 ## Low
 
