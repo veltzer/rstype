@@ -4,7 +4,7 @@ A fast, terminal-based typing trainer written in Rust with multiple typing modes
 
 ## Documentation
 
-Full documentation: https://veltzer.github.io/rstype/
+Full documentation: <https://veltzer.github.io/rstype/>
 
 ## Features
 
