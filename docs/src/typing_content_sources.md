@@ -18,6 +18,7 @@ of topics.
   Downloads paragraphs from Wikipedia until your local collection reaches
   the target size (default: 1000). Use `-c` or `--count` to specify a
   different total count.
+
     ```bash
     rstype wikipedia download --count 5000
     ```
@@ -48,6 +49,7 @@ improving raw speed without the context of natural sentences.
 
 * **`rstype dict install <LANG>`**
   Installs a specific dictionary (e.g., `en-US`, `de-DE`, `fr`).
+
     ```bash
     rstype dict install en-US
     ```
