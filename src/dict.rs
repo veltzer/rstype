@@ -1,4 +1,4 @@
-use crate::utils::{TextLength, dirs_home};
+use crate::utils::{TextLength, clock_seed, dirs_home, rng_index};
 use std::fs;
 use std::path::PathBuf;
 
@@ -971,7 +971,7 @@ pub fn dict_dir() -> PathBuf {
 /// Returns only lowercase ASCII words (2–10 chars) suitable for word salad.
 pub fn load_dict_words(lang: &str) -> Vec<String> {
     let dir = dict_dir();
-    let dic_path = dir.join(format!("{}.dic", lang));
+    let dic_path = dir.join(format!("{lang}.dic"));
     let Ok(content) = fs::read_to_string(&dic_path) else {
         return Vec::new();
     };
@@ -1025,11 +1025,7 @@ pub fn generate_word_salad(length: TextLength) -> String {
     let use_dict = !dict_words.is_empty();
 
     // Seed a simple xorshift64 from the clock
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let mut state: u64 = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
+    let mut state: u64 = clock_seed();
     if state == 0 {
         state = 0xDEAD_BEEF;
     }
@@ -1042,9 +1038,9 @@ pub fn generate_word_salad(length: TextLength) -> String {
 
     let pick_word = |rng_val: u64| -> &str {
         if use_dict {
-            &dict_words[(rng_val as usize) % dict_words.len()]
+            &dict_words[rng_index(rng_val, dict_words.len())]
         } else {
-            COMMON_WORDS[(rng_val as usize) % COMMON_WORDS.len()]
+            COMMON_WORDS[rng_index(rng_val, COMMON_WORDS.len())]
         }
     };
 
@@ -1095,7 +1091,7 @@ pub fn cmd_dict_list() {
             if p.extension().and_then(|s| s.to_str()) == Some("dic") {
                 p.file_stem()
                     .and_then(|s| s.to_str())
-                    .map(|s| s.to_string())
+                    .map(std::string::ToString::to_string)
             } else {
                 None
             }
@@ -1136,14 +1132,14 @@ pub fn cmd_dict_list_remote() {
         .filter_map(|item| {
             item.get("name")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
         })
         .collect();
     langs.sort();
 
     println!("Available languages ({}):", langs.len());
     for lang in &langs {
-        println!("  {}", lang);
+        println!("  {lang}");
     }
     println!();
     println!("Install with: rstype dict install <lang>");
@@ -1155,17 +1151,15 @@ pub fn cmd_dict_install(lang: &str) {
     let lang_normalized = lang.replace('_', "-");
 
     let dic_url = format!(
-        "https://raw.githubusercontent.com/wooorm/dictionaries/main/dictionaries/{}/index.dic",
-        lang_normalized
+        "https://raw.githubusercontent.com/wooorm/dictionaries/main/dictionaries/{lang_normalized}/index.dic"
     );
 
-    eprintln!("Downloading dictionary for {}...", lang_normalized);
+    eprintln!("Downloading dictionary for {lang_normalized}...");
 
     let resp = ureq::get(&dic_url).set("User-Agent", "rstype/1.0").call();
     let Ok(resp) = resp else {
         eprintln!(
-            "Error: failed to download .dic file. Check if '{}' exists at https://github.com/wooorm/dictionaries",
-            lang_normalized
+            "Error: failed to download .dic file. Check if '{lang_normalized}' exists at https://github.com/wooorm/dictionaries"
         );
         return;
     };
@@ -1174,7 +1168,7 @@ pub fn cmd_dict_install(lang: &str) {
         return;
     };
 
-    let dest = dir.join(format!("{}.dic", lang_normalized));
+    let dest = dir.join(format!("{lang_normalized}.dic"));
     if let Err(e) = fs::write(&dest, &content) {
         eprintln!("Error writing {}: {}", dest.display(), e);
         return;
@@ -1191,14 +1185,14 @@ pub fn cmd_dict_install(lang: &str) {
 pub fn cmd_dict_remove(lang: &str) {
     let dir = dict_dir();
     let lang_normalized = lang.replace('_', "-");
-    let dic_path = dir.join(format!("{}.dic", lang_normalized));
+    let dic_path = dir.join(format!("{lang_normalized}.dic"));
 
     if dic_path.exists() {
         match fs::remove_file(&dic_path) {
-            Ok(()) => eprintln!("Removed {}", lang_normalized),
+            Ok(()) => eprintln!("Removed {lang_normalized}"),
             Err(e) => eprintln!("Error removing {}: {}", dic_path.display(), e),
         }
     } else {
-        eprintln!("Dictionary '{}' is not installed.", lang_normalized);
+        eprintln!("Dictionary '{lang_normalized}' is not installed.");
     }
 }

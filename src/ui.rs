@@ -8,9 +8,9 @@ use std::io;
 
 use crate::train::{App, TypingState};
 use crate::utils::{
-    Screen, TextLength, TextSource, TypingMode, compute_hand_stats, days_in_month_cal,
-    first_weekday_of_month, load_all_wpms, load_history_hand_stats, load_history_stats, month_name,
-    paragraphs_path, today_ym,
+    HandStats, Screen, TextLength, TextSource, TypingMode, compute_hand_stats, days_in_month_cal,
+    f64_to_usize, first_weekday_of_month, load_all_wpms, load_history_hand_stats,
+    load_history_stats, month_name, paragraphs_path, today_ym, u64_to_f64, usize_to_f64,
 };
 use crate::wikipedia::load_paragraphs;
 
@@ -115,9 +115,9 @@ fn render_toolbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 
     let left_width: u16 = 60;
     let title = "rstype by Mark Veltzer  ";
-    let title_len = title.len() as u16;
+    let title_len = u16::try_from(title.len()).unwrap_or(u16::MAX);
     let pad = area.width.saturating_sub(left_width + title_len);
-    spans.push(Span::styled(" ".repeat(pad as usize), normal_style));
+    spans.push(Span::styled(" ".repeat(usize::from(pad)), normal_style));
     spans.push(Span::styled(
         title,
         Style::default().fg(Color::DarkGray).bg(Color::White),
@@ -135,24 +135,24 @@ fn render_statusbar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         TypingMode::SuddenDeath => "sudden death",
         TypingMode::Blind => "blind",
     };
-    let text = format!(" mode: {mode_label}{}", " ".repeat(area.width as usize));
+    let text = format!(" mode: {mode_label}{}", " ".repeat(usize::from(area.width)));
     frame.render_widget(Paragraph::new(text).style(style), area);
 }
+
+const CELL: usize = 10;
 
 fn render_calendar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let year = app.calendar_year;
     let month = app.calendar_month;
     let first_dow = first_weekday_of_month(year, month);
     let num_days = days_in_month_cal(year, month);
-
-    const CELL: usize = 10;
     let dow_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
     let header_spans: Vec<Span> = dow_names
         .iter()
         .map(|n| {
             Span::styled(
-                format!("{:<CELL$}", n),
+                format!("{n:<CELL$}"),
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
@@ -169,36 +169,36 @@ fn render_calendar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 
     for slot in 0..total_slots {
         let col = slot % 7;
-        let day_num = slot - first_dow as i32 + 1;
+        let day_num = slot - i32::try_from(first_dow).unwrap_or(0) + 1;
 
-        if day_num < 1 || day_num > num_days as i32 {
+        if day_num < 1 || day_num > i32::try_from(num_days).unwrap_or(31) {
             day_spans.push(Span::raw(format!("{:<CELL$}", "")));
             stat_spans.push(Span::raw(format!("{:<CELL$}", "")));
             wc_spans.push(Span::raw(format!("{:<CELL$}", "")));
         } else {
-            let d = day_num as u32;
-            let date_key = format!("{:04}-{:02}-{:02}", year, month, d);
+            let d = u32::try_from(day_num).unwrap_or(1);
+            let date_key = format!("{year:04}-{month:02}-{d:02}");
             let (stat_text, wc_text) =
                 if let Some(&(count, avg, words, chars)) = app.calendar_stats.get(&date_key) {
                     (
-                        format!("{}s {:.0}wpm", count, avg),
-                        format!("{}w {}c", words, chars),
+                        format!("{count}s {avg:.0}wpm"),
+                        format!("{words}w {chars}c"),
                     )
                 } else {
                     (String::new(), String::new())
                 };
             day_spans.push(Span::styled(
-                format!("{:<CELL$}", d),
+                format!("{d:<CELL$}"),
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             ));
             stat_spans.push(Span::styled(
-                format!("{:<CELL$}", stat_text),
+                format!("{stat_text:<CELL$}"),
                 Style::default().fg(Color::Cyan),
             ));
             wc_spans.push(Span::styled(
-                format!("{:<CELL$}", wc_text),
+                format!("{wc_text:<CELL$}"),
                 Style::default().fg(Color::Yellow),
             ));
         }
@@ -229,21 +229,125 @@ fn render_calendar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(all_lines), area);
 }
 
+fn wiki_row(label: &str, value: String, color: Color) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!("  {label:<22}"),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            value,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+
+/// Statistics block for a non-empty paragraph collection.
+fn wiki_stats_lines(paragraphs: &[String]) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let total = paragraphs.len();
+    lines.push(wiki_row(
+        "total paragraphs",
+        total.to_string(),
+        Color::Yellow,
+    ));
+
+    let total_chars: usize = paragraphs.iter().map(std::string::String::len).sum();
+    let total_words: usize = paragraphs
+        .iter()
+        .map(|p| p.split_whitespace().count())
+        .sum();
+    let avg_len = usize_to_f64(total_chars) / usize_to_f64(total);
+    let min_len = paragraphs
+        .iter()
+        .map(std::string::String::len)
+        .min()
+        .unwrap_or(0);
+    let max_len = paragraphs
+        .iter()
+        .map(std::string::String::len)
+        .max()
+        .unwrap_or(0);
+
+    lines.push(wiki_row(
+        "total characters",
+        total_chars.to_string(),
+        Color::Yellow,
+    ));
+    lines.push(wiki_row(
+        "total words",
+        total_words.to_string(),
+        Color::Yellow,
+    ));
+    lines.push(wiki_row(
+        "avg length",
+        format!("{avg_len:.0} chars"),
+        Color::Yellow,
+    ));
+    lines.push(wiki_row(
+        "shortest",
+        format!("{min_len} chars"),
+        Color::Yellow,
+    ));
+    lines.push(wiki_row(
+        "longest",
+        format!("{max_len} chars"),
+        Color::Yellow,
+    ));
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Usable paragraphs by length",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    let lengths = [
+        TextLength::OneLine,
+        TextLength::ShortParagraph,
+        TextLength::Paragraph,
+        TextLength::LongParagraph,
+    ];
+    for len in &lengths {
+        let min = len.min_chars();
+        let max = len.max_chars();
+        let count = paragraphs
+            .iter()
+            .filter(|p| {
+                let plen = p.len();
+                if plen >= min && plen <= max {
+                    return true;
+                }
+                if plen > max {
+                    let trimmed: String = p.chars().take(max).collect();
+                    if let Some(pos) = trimmed.rfind(['.', '?', '!']) {
+                        return trimmed[..=pos].trim().len() >= min;
+                    }
+                }
+                false
+            })
+            .count();
+        let color = if count > 0 { Color::Green } else { Color::Red };
+        lines.push(wiki_row(len.label(), format!("{count}"), color));
+    }
+
+    let path = paragraphs_path();
+    if let Ok(meta) = std::fs::metadata(&path) {
+        let size_kb = u64_to_f64(meta.len()) / 1024.0;
+        lines.push(Line::from(""));
+        lines.push(wiki_row(
+            "file size",
+            format!("{size_kb:.0} KB"),
+            Color::DarkGray,
+        ));
+    }
+    lines
+}
+
 fn render_wikipedia(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let mut lines: Vec<Line> = Vec::new();
-
-    let row = |label: &str, value: String, color: Color| -> Line<'static> {
-        Line::from(vec![
-            Span::styled(
-                format!("  {:<22}", label),
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::styled(
-                value,
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ),
-        ])
-    };
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -263,79 +367,7 @@ fn render_wikipedia(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             Style::default().fg(Color::DarkGray),
         )));
     } else {
-        lines.push(row("total paragraphs", total.to_string(), Color::Yellow));
-
-        let total_chars: usize = paragraphs.iter().map(|p| p.len()).sum();
-        let total_words: usize = paragraphs
-            .iter()
-            .map(|p| p.split_whitespace().count())
-            .sum();
-        let avg_len = total_chars as f64 / total as f64;
-        let min_len = paragraphs.iter().map(|p| p.len()).min().unwrap_or(0);
-        let max_len = paragraphs.iter().map(|p| p.len()).max().unwrap_or(0);
-
-        lines.push(row(
-            "total characters",
-            total_chars.to_string(),
-            Color::Yellow,
-        ));
-        lines.push(row("total words", total_words.to_string(), Color::Yellow));
-        lines.push(row(
-            "avg length",
-            format!("{:.0} chars", avg_len),
-            Color::Yellow,
-        ));
-        lines.push(row("shortest", format!("{} chars", min_len), Color::Yellow));
-        lines.push(row("longest", format!("{} chars", max_len), Color::Yellow));
-
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  Usable paragraphs by length",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-
-        let lengths = [
-            TextLength::OneLine,
-            TextLength::ShortParagraph,
-            TextLength::Paragraph,
-            TextLength::LongParagraph,
-        ];
-        for len in &lengths {
-            let min = len.min_chars();
-            let max = len.max_chars();
-            let count = paragraphs
-                .iter()
-                .filter(|p| {
-                    let plen = p.len();
-                    if plen >= min && plen <= max {
-                        return true;
-                    }
-                    if plen > max {
-                        let trimmed: String = p.chars().take(max).collect();
-                        if let Some(pos) = trimmed.rfind(['.', '?', '!']) {
-                            return trimmed[..=pos].trim().len() >= min;
-                        }
-                    }
-                    false
-                })
-                .count();
-            let color = if count > 0 { Color::Green } else { Color::Red };
-            lines.push(row(len.label(), format!("{}", count), color));
-        }
-
-        let path = paragraphs_path();
-        if let Ok(meta) = std::fs::metadata(&path) {
-            let size_kb = meta.len() as f64 / 1024.0;
-            lines.push(Line::from(""));
-            lines.push(row(
-                "file size",
-                format!("{:.0} KB", size_kb),
-                Color::DarkGray,
-            ));
-        }
+        lines.extend(wiki_stats_lines(&paragraphs));
     }
 
     lines.push(Line::from(""));
@@ -343,12 +375,12 @@ fn render_wikipedia(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 
     if app.wiki_collecting {
         let pct = if app.wiki_target > 0 {
-            (app.wiki_collected as f64 / app.wiki_target as f64 * 100.0).min(100.0)
+            (usize_to_f64(app.wiki_collected) / usize_to_f64(app.wiki_target) * 100.0).min(100.0)
         } else {
             0.0
         };
         let bar_width = 30usize;
-        let filled = (pct / 100.0 * bar_width as f64) as usize;
+        let filled = f64_to_usize(pct / 100.0 * usize_to_f64(bar_width));
         let empty = bar_width.saturating_sub(filled);
         let bar = format!("[{}{}] {:.0}%", "█".repeat(filled), "░".repeat(empty), pct);
 
@@ -362,7 +394,7 @@ fn render_wikipedia(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(Span::styled(
-            format!("  {}", bar),
+            format!("  {bar}"),
             Style::default().fg(Color::Cyan),
         )));
     } else {
@@ -375,31 +407,117 @@ fn render_wikipedia(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn render_stats(frame: &mut ratatui::Frame, area: Rect, app: &App) {
-    let mut lines: Vec<Line> = Vec::new();
+fn stats_row(label: &str, value: String, color: Color) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!("  {label:<18}"),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            value,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
 
-    let row = |label: &str, value: String, color: Color| -> Line<'static> {
-        Line::from(vec![
-            Span::styled(
-                format!("  {:<18}", label),
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::styled(
-                value,
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ),
-        ])
+/// Left/right hand comparison table.
+fn hand_table_lines(left_stats: &HandStats, right_stats: &HandStats) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled(format!("  {:<18}", ""), Style::default()),
+        Span::styled(
+            format!("{:>10}", "Left"),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{:>10}", "Right"),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    let left_resp = if left_stats.total_keys > 1 {
+        format!("{:.0} ms", left_stats.avg_response_ms)
+    } else {
+        "—".to_string()
     };
+    let right_resp = if right_stats.total_keys > 1 {
+        format!("{:.0} ms", right_stats.avg_response_ms)
+    } else {
+        "—".to_string()
+    };
+    lines.push(Line::from(vec![
+        Span::raw(format!("  {:<18}", "avg response")),
+        Span::styled(
+            format!("{left_resp:>10}"),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(
+            format!("{right_resp:>10}"),
+            Style::default().fg(Color::White),
+        ),
+    ]));
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "  Last session",
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    )));
-    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::raw(format!("  {:<18}", "keys typed")),
+        Span::styled(
+            format!("{:>10}", left_stats.total_keys),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(
+            format!("{:>10}", right_stats.total_keys),
+            Style::default().fg(Color::White),
+        ),
+    ]));
 
+    lines.push(Line::from(vec![
+        Span::raw(format!("  {:<18}", "errors")),
+        Span::styled(
+            format!("{:>10}", left_stats.errors),
+            Style::default().fg(if left_stats.errors == 0 {
+                Color::Green
+            } else {
+                Color::Red
+            }),
+        ),
+        Span::styled(
+            format!("{:>10}", right_stats.errors),
+            Style::default().fg(if right_stats.errors == 0 {
+                Color::Green
+            } else {
+                Color::Red
+            }),
+        ),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::raw(format!("  {:<18}", "error rate")),
+        Span::styled(
+            format!("{:>9.1}%", left_stats.error_rate()),
+            Style::default().fg(if left_stats.error_rate() < 5.0 {
+                Color::Green
+            } else {
+                Color::Red
+            }),
+        ),
+        Span::styled(
+            format!("{:>9.1}%", right_stats.error_rate()),
+            Style::default().fg(if right_stats.error_rate() < 5.0 {
+                Color::Green
+            } else {
+                Color::Red
+            }),
+        ),
+    ]));
+    lines
+}
+
+/// "Last session" body lines.
+fn session_lines(app: &App) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
     if app.typing_state == TypingState::Done {
         let accuracy = app.accuracy();
         let acc_color = if accuracy >= 95.0 {
@@ -410,9 +528,13 @@ fn render_stats(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             Color::Red
         };
 
-        lines.push(row("speed", format!("{:.1} WPM", app.wpm), Color::Yellow));
-        lines.push(row("accuracy", format!("{:.1}%", accuracy), acc_color));
-        lines.push(row(
+        lines.push(stats_row(
+            "speed",
+            format!("{:.1} WPM", app.wpm),
+            Color::Yellow,
+        ));
+        lines.push(stats_row("accuracy", format!("{accuracy:.1}%"), acc_color));
+        lines.push(stats_row(
             "errors",
             format!("{}", app.errors),
             if app.errors == 0 {
@@ -421,12 +543,12 @@ fn render_stats(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                 Color::Red
             },
         ));
-        lines.push(row(
+        lines.push(stats_row(
             "characters",
             format!("{}", app.target.len()),
             Color::Yellow,
         ));
-        lines.push(row(
+        lines.push(stats_row(
             "words",
             format!("{}", app.target.len() / 5),
             Color::Yellow,
@@ -445,95 +567,7 @@ fn render_stats(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             )));
             lines.push(Line::from(""));
 
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {:<18}", ""), Style::default()),
-                Span::styled(
-                    format!("{:>10}", "Left"),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!("{:>10}", "Right"),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]));
-
-            let left_resp = if left_stats.total_keys > 1 {
-                format!("{:.0} ms", left_stats.avg_response_ms)
-            } else {
-                "—".to_string()
-            };
-            let right_resp = if right_stats.total_keys > 1 {
-                format!("{:.0} ms", right_stats.avg_response_ms)
-            } else {
-                "—".to_string()
-            };
-            lines.push(Line::from(vec![
-                Span::raw(format!("  {:<18}", "avg response")),
-                Span::styled(
-                    format!("{:>10}", left_resp),
-                    Style::default().fg(Color::White),
-                ),
-                Span::styled(
-                    format!("{:>10}", right_resp),
-                    Style::default().fg(Color::White),
-                ),
-            ]));
-
-            lines.push(Line::from(vec![
-                Span::raw(format!("  {:<18}", "keys typed")),
-                Span::styled(
-                    format!("{:>10}", left_stats.total_keys),
-                    Style::default().fg(Color::White),
-                ),
-                Span::styled(
-                    format!("{:>10}", right_stats.total_keys),
-                    Style::default().fg(Color::White),
-                ),
-            ]));
-
-            lines.push(Line::from(vec![
-                Span::raw(format!("  {:<18}", "errors")),
-                Span::styled(
-                    format!("{:>10}", left_stats.errors),
-                    Style::default().fg(if left_stats.errors == 0 {
-                        Color::Green
-                    } else {
-                        Color::Red
-                    }),
-                ),
-                Span::styled(
-                    format!("{:>10}", right_stats.errors),
-                    Style::default().fg(if right_stats.errors == 0 {
-                        Color::Green
-                    } else {
-                        Color::Red
-                    }),
-                ),
-            ]));
-
-            lines.push(Line::from(vec![
-                Span::raw(format!("  {:<18}", "error rate")),
-                Span::styled(
-                    format!("{:>9.1}%", left_stats.error_rate()),
-                    Style::default().fg(if left_stats.error_rate() < 5.0 {
-                        Color::Green
-                    } else {
-                        Color::Red
-                    }),
-                ),
-                Span::styled(
-                    format!("{:>9.1}%", right_stats.error_rate()),
-                    Style::default().fg(if right_stats.error_rate() < 5.0 {
-                        Color::Green
-                    } else {
-                        Color::Red
-                    }),
-                ),
-            ]));
+            lines.extend(hand_table_lines(&left_stats, &right_stats));
         }
     } else {
         lines.push(Line::from(Span::styled(
@@ -542,6 +576,12 @@ fn render_stats(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         )));
     }
 
+    lines
+}
+
+/// "All-time totals" heading and body lines.
+fn history_lines() -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
     let stats = load_history_stats();
 
     lines.push(Line::from(""));
@@ -566,47 +606,60 @@ fn render_stats(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         let days_practiced = stats.len();
         for &(sessions, avg_wpm, words, chars) in stats.values() {
             total_sessions += sessions;
-            total_wpm_sum += avg_wpm * sessions as f64;
+            total_wpm_sum += avg_wpm * usize_to_f64(sessions);
             total_words += words;
             total_chars += chars;
         }
         let overall_avg_wpm = if total_sessions > 0 {
-            total_wpm_sum / total_sessions as f64
+            total_wpm_sum / usize_to_f64(total_sessions)
         } else {
             0.0
         };
 
-        lines.push(row("sessions", total_sessions.to_string(), Color::Yellow));
-        lines.push(row(
+        lines.push(stats_row(
+            "sessions",
+            total_sessions.to_string(),
+            Color::Yellow,
+        ));
+        lines.push(stats_row(
             "days practiced",
             days_practiced.to_string(),
             Color::Yellow,
         ));
-        lines.push(row(
+        lines.push(stats_row(
             "avg WPM",
-            format!("{:.1}", overall_avg_wpm),
+            format!("{overall_avg_wpm:.1}"),
             Color::Yellow,
         ));
 
         let wpms = load_all_wpms();
         if !wpms.is_empty() {
-            let min_wpm = wpms.iter().cloned().fold(f64::INFINITY, f64::min);
-            let max_wpm = wpms.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let mean = wpms.iter().sum::<f64>() / wpms.len() as f64;
-            let variance = wpms.iter().map(|w| (w - mean).powi(2)).sum::<f64>() / wpms.len() as f64;
+            let min_wpm = wpms.iter().copied().fold(f64::INFINITY, f64::min);
+            let max_wpm = wpms.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let mean = wpms.iter().sum::<f64>() / usize_to_f64(wpms.len());
+            let variance =
+                wpms.iter().map(|w| (w - mean).powi(2)).sum::<f64>() / usize_to_f64(wpms.len());
             let std_dev = variance.sqrt();
 
-            lines.push(row("min WPM", format!("{:.1}", min_wpm), Color::Red));
-            lines.push(row("max WPM", format!("{:.1}", max_wpm), Color::Green));
-            lines.push(row(
+            lines.push(stats_row("min WPM", format!("{min_wpm:.1}"), Color::Red));
+            lines.push(stats_row("max WPM", format!("{max_wpm:.1}"), Color::Green));
+            lines.push(stats_row(
                 "std deviation",
-                format!("{:.1}", std_dev),
+                format!("{std_dev:.1}"),
                 Color::Yellow,
             ));
         }
 
-        lines.push(row("total words", total_words.to_string(), Color::Yellow));
-        lines.push(row("total chars", total_chars.to_string(), Color::Yellow));
+        lines.push(stats_row(
+            "total words",
+            total_words.to_string(),
+            Color::Yellow,
+        ));
+        lines.push(stats_row(
+            "total chars",
+            total_chars.to_string(),
+            Color::Yellow,
+        ));
 
         let (left_all, right_all) = load_history_hand_stats();
         if left_all.total_keys > 0 || right_all.total_keys > 0 {
@@ -619,97 +672,27 @@ fn render_stats(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             )));
             lines.push(Line::from(""));
 
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {:<18}", ""), Style::default()),
-                Span::styled(
-                    format!("{:>10}", "Left"),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!("{:>10}", "Right"),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]));
-
-            let left_resp = if left_all.total_keys > 1 {
-                format!("{:.0} ms", left_all.avg_response_ms)
-            } else {
-                "—".to_string()
-            };
-            let right_resp = if right_all.total_keys > 1 {
-                format!("{:.0} ms", right_all.avg_response_ms)
-            } else {
-                "—".to_string()
-            };
-            lines.push(Line::from(vec![
-                Span::raw(format!("  {:<18}", "avg response")),
-                Span::styled(
-                    format!("{:>10}", left_resp),
-                    Style::default().fg(Color::White),
-                ),
-                Span::styled(
-                    format!("{:>10}", right_resp),
-                    Style::default().fg(Color::White),
-                ),
-            ]));
-
-            lines.push(Line::from(vec![
-                Span::raw(format!("  {:<18}", "keys typed")),
-                Span::styled(
-                    format!("{:>10}", left_all.total_keys),
-                    Style::default().fg(Color::White),
-                ),
-                Span::styled(
-                    format!("{:>10}", right_all.total_keys),
-                    Style::default().fg(Color::White),
-                ),
-            ]));
-
-            lines.push(Line::from(vec![
-                Span::raw(format!("  {:<18}", "errors")),
-                Span::styled(
-                    format!("{:>10}", left_all.errors),
-                    Style::default().fg(if left_all.errors == 0 {
-                        Color::Green
-                    } else {
-                        Color::Red
-                    }),
-                ),
-                Span::styled(
-                    format!("{:>10}", right_all.errors),
-                    Style::default().fg(if right_all.errors == 0 {
-                        Color::Green
-                    } else {
-                        Color::Red
-                    }),
-                ),
-            ]));
-
-            lines.push(Line::from(vec![
-                Span::raw(format!("  {:<18}", "error rate")),
-                Span::styled(
-                    format!("{:>9.1}%", left_all.error_rate()),
-                    Style::default().fg(if left_all.error_rate() < 5.0 {
-                        Color::Green
-                    } else {
-                        Color::Red
-                    }),
-                ),
-                Span::styled(
-                    format!("{:>9.1}%", right_all.error_rate()),
-                    Style::default().fg(if right_all.error_rate() < 5.0 {
-                        Color::Green
-                    } else {
-                        Color::Red
-                    }),
-                ),
-            ]));
+            lines.extend(hand_table_lines(&left_all, &right_all));
         }
     }
+
+    lines
+}
+
+fn render_stats(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    let mut lines: Vec<Line> = Vec::new();
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Last session",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    lines.extend(session_lines(app));
+    lines.extend(history_lines());
 
     frame.render_widget(Paragraph::new(lines), area);
 }
@@ -724,9 +707,9 @@ fn render_exit(frame: &mut ratatui::Frame, area: Rect) {
             .unwrap_or_default()
             .as_secs();
         let (_, _, d) = crate::utils::days_to_ymd(secs / 86400);
-        d as u32
+        u32::try_from(d).unwrap_or(1)
     };
-    let date_key = format!("{:04}-{:02}-{:02}", year, month, today_day);
+    let date_key = format!("{year:04}-{month:02}-{today_day:02}");
 
     let mut lines = vec![
         Line::from(""),
@@ -742,7 +725,7 @@ fn render_exit(frame: &mut ratatui::Frame, area: Rect) {
     let row = |label: &str, value: String| -> Line<'static> {
         Line::from(vec![
             Span::styled(
-                format!("  {:<16}", label),
+                format!("  {label:<16}"),
                 Style::default().fg(Color::DarkGray),
             ),
             Span::styled(
@@ -756,7 +739,7 @@ fn render_exit(frame: &mut ratatui::Frame, area: Rect) {
 
     if let Some(&(sessions, avg_wpm, words, chars)) = stats.get(&date_key) {
         lines.push(row("sessions", sessions.to_string()));
-        lines.push(row("avg WPM", format!("{:.1}", avg_wpm)));
+        lines.push(row("avg WPM", format!("{avg_wpm:.1}")));
         lines.push(row("total words", words.to_string()));
         lines.push(row("total chars", chars.to_string()));
     } else {
@@ -779,7 +762,7 @@ fn render_about(frame: &mut ratatui::Frame, area: Rect) {
     let w = |label: &str, value: &str, color: Color| -> Line<'static> {
         Line::from(vec![
             Span::styled(
-                format!("  {:<18}", label),
+                format!("  {label:<18}"),
                 Style::default().fg(Color::DarkGray),
             ),
             Span::styled(
@@ -813,6 +796,23 @@ fn render_about(frame: &mut ratatui::Frame, area: Rect) {
     ];
 
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// One selectable option line of the config screen.
+fn option_line(label: &str, selected: bool, active: bool) -> Line<'static> {
+    let prefix = if selected { "▶ " } else { "  " };
+    let suffix = if active { "  ✓" } else { "" };
+    let style = if selected {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else if active {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    Line::from(Span::styled(format!("{prefix}{label}{suffix}"), style))
 }
 
 fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
@@ -853,20 +853,7 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     for (i, mode) in MODES.iter().enumerate() {
         let selected = app.config_section == 0 && i == app.config_cursor;
         let active = *mode == app.config.mode;
-        let prefix = if selected { "▶ " } else { "  " };
-        let suffix = if active { "  ✓" } else { "" };
-        let label = format!("{}{}{}", prefix, mode.label(), suffix);
-        let style = if selected {
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
-        } else if active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        lines.push(Line::from(Span::styled(label, style)));
+        lines.push(option_line(mode.label(), selected, active));
     }
 
     if app.config_section == 0 {
@@ -874,7 +861,7 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         let desc = MODES[app.config_cursor].description();
         for desc_line in desc.lines() {
             lines.push(Line::from(Span::styled(
-                format!("  {}", desc_line),
+                format!("  {desc_line}"),
                 Style::default().fg(Color::White),
             )));
         }
@@ -890,20 +877,7 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     for (i, src) in SOURCES.iter().enumerate() {
         let selected = app.config_section == 1 && i == app.config_source_cursor;
         let active = *src == app.config.text_source;
-        let prefix = if selected { "▶ " } else { "  " };
-        let suffix = if active { "  ✓" } else { "" };
-        let label = format!("{}{}{}", prefix, src.label(), suffix);
-        let style = if selected {
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
-        } else if active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        lines.push(Line::from(Span::styled(label, style)));
+        lines.push(option_line(src.label(), selected, active));
     }
 
     if app.config_section == 1 {
@@ -911,7 +885,7 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         let desc = SOURCES[app.config_source_cursor].description();
         for desc_line in desc.lines() {
             lines.push(Line::from(Span::styled(
-                format!("  {}", desc_line),
+                format!("  {desc_line}"),
                 Style::default().fg(Color::White),
             )));
         }
@@ -927,20 +901,7 @@ fn render_config(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     for (i, len) in LENGTHS.iter().enumerate() {
         let selected = app.config_section == 2 && i == app.config_length_cursor;
         let active = *len == app.config.text_length;
-        let prefix = if selected { "▶ " } else { "  " };
-        let suffix = if active { "  ✓" } else { "" };
-        let label = format!("{}{}{}", prefix, len.label(), suffix);
-        let style = if selected {
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
-        } else if active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        lines.push(Line::from(Span::styled(label, style)));
+        lines.push(option_line(len.label(), selected, active));
     }
 
     if app.config_section == 2 {

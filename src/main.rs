@@ -23,6 +23,7 @@ use crate::train::App;
 use crate::ui::render;
 use crate::utils::{
     Config, TextLength, TextSource, TypingMode, history_path, load_config, load_history_stats,
+    u64_to_f64, usize_to_f64,
 };
 use crate::wikipedia::{cmd_collect, cmd_wikipedia_clear, cmd_wikipedia_show, cmd_wikipedia_stats};
 
@@ -224,21 +225,21 @@ fn cmd_stats_show() {
     let total_words: usize = stats.values().map(|v| v.2).sum();
     let total_chars: usize = stats.values().map(|v| v.3).sum();
     let overall_avg_wpm: f64 = if total_sessions > 0 {
-        stats.values().map(|v| v.1 * v.0 as f64).sum::<f64>() / total_sessions as f64
+        stats.values().map(|v| v.1 * usize_to_f64(v.0)).sum::<f64>() / usize_to_f64(total_sessions)
     } else {
         0.0
     };
     let mut dates: Vec<&String> = stats.keys().collect();
     dates.sort();
-    let first_date = dates.first().map(|s| s.as_str()).unwrap_or("N/A");
-    let last_date = dates.last().map(|s| s.as_str()).unwrap_or("N/A");
+    let first_date = dates.first().map_or("N/A", |s| s.as_str());
+    let last_date = dates.last().map_or("N/A", |s| s.as_str());
 
     if let Ok(meta) = std::fs::metadata(&path) {
         let size = meta.len();
         let (size_val, size_unit) = if size >= 1_048_576 {
-            (size as f64 / 1_048_576.0, "MiB")
+            (u64_to_f64(size) / 1_048_576.0, "MiB")
         } else {
-            (size as f64 / 1024.0, "KiB")
+            (u64_to_f64(size) / 1024.0, "KiB")
         };
         eprintln!(
             "History file:    {} ({:.1} {})",
@@ -250,12 +251,12 @@ fn cmd_stats_show() {
         eprintln!("History file:    {}", path.display());
     }
     eprintln!("Days practiced:  {}", dates.len());
-    eprintln!("First session:   {}", first_date);
-    eprintln!("Last session:    {}", last_date);
-    eprintln!("Total sessions:  {}", total_sessions);
-    eprintln!("Total words:     {}", total_words);
-    eprintln!("Total chars:     {}", total_chars);
-    eprintln!("Average WPM:     {:.1}", overall_avg_wpm);
+    eprintln!("First session:   {first_date}");
+    eprintln!("Last session:    {last_date}");
+    eprintln!("Total sessions:  {total_sessions}");
+    eprintln!("Total words:     {total_words}");
+    eprintln!("Total chars:     {total_chars}");
+    eprintln!("Average WPM:     {overall_avg_wpm:.1}");
 }
 
 fn cmd_stats_clear() {
@@ -311,7 +312,7 @@ fn run_tui(config: Config) -> io::Result<()> {
                 break;
             }
             app.error_flash = false;
-            app.last_pressed_key = None;
+            app.last_pressed = None;
         }
     }
 

@@ -1,4 +1,4 @@
-use crate::utils::{TextLength, paragraphs_path};
+use crate::utils::{TextLength, clock_seed, paragraphs_path, rng_index, u64_to_f64, usize_to_f64};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::time::Duration;
@@ -19,7 +19,7 @@ pub fn load_paragraphs() -> Vec<String> {
         .filter_map(|val| {
             val.get("text")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
         })
         .collect()
 }
@@ -32,11 +32,7 @@ pub fn pick_collected_paragraph(length: TextLength) -> Option<String> {
     let min = length.min_chars();
     let max = length.max_chars();
 
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let mut state: u64 = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
+    let mut state: u64 = clock_seed();
     if state == 0 {
         state = 0xDEAD_BEEF;
     }
@@ -73,11 +69,11 @@ pub fn pick_collected_paragraph(length: TextLength) -> Option<String> {
         if trimmable.is_empty() {
             return None;
         }
-        let idx = (rng() as usize) % trimmable.len();
+        let idx = rng_index(rng(), trimmable.len());
         return Some(trimmable[idx].clone());
     }
 
-    let idx = (rng() as usize) % candidates.len();
+    let idx = rng_index(rng(), candidates.len());
     Some(candidates[idx].clone())
 }
 
@@ -136,12 +132,9 @@ pub fn cmd_collect(target_count: usize) {
     let mut seen: std::collections::HashSet<String> = existing.into_iter().collect();
     let initial = seen.len();
 
-    eprintln!(
-        "Collecting paragraphs from Wikipedia (target: {})...",
-        target_count
-    );
+    eprintln!("Collecting paragraphs from Wikipedia (target: {target_count})...");
     if initial > 0 {
-        eprintln!("  {} paragraphs already collected", initial);
+        eprintln!("  {initial} paragraphs already collected");
     }
 
     let mut file = OpenOptions::new()
@@ -162,7 +155,7 @@ pub fn cmd_collect(target_count: usize) {
             }
             seen.insert(para.clone());
             if let Ok(json) = serde_json::to_string(&serde_json::json!({ "text": para })) {
-                let _ = writeln!(file, "{}", json);
+                let _ = writeln!(file, "{json}");
                 total += 1;
                 added += 1;
             }
@@ -171,8 +164,7 @@ pub fn cmd_collect(target_count: usize) {
             }
         }
         eprint!(
-            "\r  request {} — {} paragraphs collected ({} new this batch)   ",
-            requests, total, added
+            "\r  request {requests} — {total} paragraphs collected ({added} new this batch)   "
         );
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -191,27 +183,38 @@ pub fn cmd_wikipedia_stats() {
     }
 
     let total = paragraphs.len();
-    let total_chars: usize = paragraphs.iter().map(|p| p.len()).sum();
+    let total_chars: usize = paragraphs.iter().map(std::string::String::len).sum();
     let total_words: usize = paragraphs
         .iter()
         .map(|p| p.split_whitespace().count())
         .sum();
-    let avg_len = total_chars as f64 / total as f64;
-    let min_len = paragraphs.iter().map(|p| p.len()).min().unwrap_or(0);
-    let max_len = paragraphs.iter().map(|p| p.len()).max().unwrap_or(0);
+    let avg_len = usize_to_f64(total_chars) / usize_to_f64(total);
+    let min_len = paragraphs
+        .iter()
+        .map(std::string::String::len)
+        .min()
+        .unwrap_or(0);
+    let max_len = paragraphs
+        .iter()
+        .map(std::string::String::len)
+        .max()
+        .unwrap_or(0);
 
     println!("Wikipedia collection");
     println!("  file:             {}", path.display());
     if let Ok(meta) = fs::metadata(&path) {
-        println!("  file size:        {:.0} KB", meta.len() as f64 / 1024.0);
+        println!(
+            "  file size:        {:.0} KB",
+            u64_to_f64(meta.len()) / 1024.0
+        );
     }
     println!();
-    println!("  total paragraphs: {}", total);
-    println!("  total characters: {}", total_chars);
-    println!("  total words:      {}", total_words);
-    println!("  avg length:       {:.0} chars", avg_len);
-    println!("  shortest:         {} chars", min_len);
-    println!("  longest:          {} chars", max_len);
+    println!("  total paragraphs: {total}");
+    println!("  total characters: {total_chars}");
+    println!("  total words:      {total_words}");
+    println!("  avg length:       {avg_len:.0} chars");
+    println!("  shortest:         {min_len} chars");
+    println!("  longest:          {max_len} chars");
 
     println!();
     println!("Usable paragraphs by length:");

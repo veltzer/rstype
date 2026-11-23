@@ -9,7 +9,12 @@ use std::io::Write;
 use std::time::{Duration, Instant};
 
 use crate::dict::generate_word_salad;
-use crate::utils::*;
+use crate::utils::{
+    Config, FALLBACK_TEXT, Hand, HandStats, Keystroke, Screen, Session, TEST_TEXT, TextLength,
+    TextSource, TypingMode, centered_rect, compute_hand_stats, f64_to_u32, f64_to_usize,
+    hand_for_char, keycode_to_w3c, load_history_stats, now_timestamp, paragraphs_path, save_config,
+    save_session, today_ym, usize_to_f64,
+};
 use crate::wikipedia::{
     WikiCollectMsg, fetch_wikipedia_paragraphs_batch, load_paragraphs, pick_collected_paragraph,
 };
@@ -30,8 +35,8 @@ pub struct App {
     pub cursor: usize,
     pub errors: usize,
     pub error_flash: bool,
-    pub last_pressed_key: Option<char>,
-    pub last_pressed_correct: bool,
+    /// Last pressed key and whether it was the expected one.
+    pub last_pressed: Option<(char, bool)>,
     pub typing_state: TypingState,
     pub start_time: Option<Instant>,
     pub wpm: f64,
@@ -74,8 +79,7 @@ impl App {
             cursor: 0,
             errors: 0,
             error_flash: false,
-            last_pressed_key: None,
-            last_pressed_correct: false,
+            last_pressed: None,
             typing_state: TypingState::Waiting,
             start_time: None,
             wpm: 0.0,
@@ -109,8 +113,7 @@ impl App {
         self.cursor = 0;
         self.errors = 0;
         self.error_flash = false;
-        self.last_pressed_key = None;
-        self.last_pressed_correct = false;
+        self.last_pressed = None;
         self.typing_state = TypingState::Waiting;
         self.start_time = None;
         self.wpm = 0.0;
@@ -173,12 +176,9 @@ impl App {
             let mut total = seen.len();
             let _ = tx.send(WikiCollectMsg::Progress(total, 0));
 
-            let mut file = match OpenOptions::new().create(true).append(true).open(&path) {
-                Ok(f) => f,
-                Err(_) => {
-                    let _ = tx.send(WikiCollectMsg::Done(total));
-                    return;
-                }
+            let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) else {
+                let _ = tx.send(WikiCollectMsg::Done(total));
+                return;
             };
 
             let mut requests = 0u32;
@@ -191,7 +191,7 @@ impl App {
                     }
                     seen.insert(para.clone());
                     if let Ok(json) = serde_json::to_string(&serde_json::json!({ "text": para })) {
-                        let _ = writeln!(file, "{}", json);
+                        let _ = writeln!(file, "{json}");
                         total += 1;
                     }
                     if total >= target {
@@ -210,6 +210,27 @@ impl App {
         *self = App::new(cfg);
     }
 
+    /// Handle a Ctrl shortcut; returns true when the key was consumed.
+    fn on_ctrl_key(&mut self, code: KeyCode) -> bool {
+        match code {
+            KeyCode::Char('e') => self.screen = Screen::Exit,
+            KeyCode::Char('t') => self.screen = Screen::Typing,
+            KeyCode::Char('g') => self.open_config(),
+            KeyCode::Char('h') => self.open_calendar(),
+            KeyCode::Char('a') => self.screen = Screen::About,
+            KeyCode::Char('s') => self.screen = Screen::Stats,
+            KeyCode::Char('w') => self.screen = Screen::Wikipedia,
+            KeyCode::Char('n') => {
+                if !self.fetching && self.typing_state != TypingState::Typing {
+                    self.screen = Screen::Typing;
+                    self.fetch_new_text();
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
     pub fn on_key(&mut self, key: KeyEvent) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if ctrl && key.code == KeyCode::Char('c') {
@@ -219,45 +240,8 @@ impl App {
             return false;
         }
 
-        if ctrl {
-            match key.code {
-                KeyCode::Char('e') => {
-                    self.screen = Screen::Exit;
-                    return false;
-                }
-                KeyCode::Char('t') => {
-                    self.screen = Screen::Typing;
-                    return false;
-                }
-                KeyCode::Char('g') => {
-                    self.open_config();
-                    return false;
-                }
-                KeyCode::Char('h') => {
-                    self.open_calendar();
-                    return false;
-                }
-                KeyCode::Char('a') => {
-                    self.screen = Screen::About;
-                    return false;
-                }
-                KeyCode::Char('s') => {
-                    self.screen = Screen::Stats;
-                    return false;
-                }
-                KeyCode::Char('w') => {
-                    self.screen = Screen::Wikipedia;
-                    return false;
-                }
-                KeyCode::Char('n') => {
-                    if !self.fetching && self.typing_state != TypingState::Typing {
-                        self.screen = Screen::Typing;
-                        self.fetch_new_text();
-                    }
-                    return false;
-                }
-                _ => {}
-            }
+        if ctrl && self.on_ctrl_key(key.code) {
+            return false;
         }
 
         let typing_in_progress =
@@ -273,18 +257,13 @@ impl App {
                 Screen::Exit,
             ];
             let cur = ORDER.iter().position(|s| s == &self.screen).unwrap_or(0);
-            if key.code == KeyCode::Left {
-                self.screen = ORDER[(cur + ORDER.len() - 1) % ORDER.len()].clone();
-                if self.screen == Screen::Calendar {
-                    self.open_calendar();
-                }
-                if self.screen == Screen::Config {
-                    self.open_config();
-                }
-                return false;
-            }
-            if key.code == KeyCode::Right {
-                self.screen = ORDER[(cur + 1) % ORDER.len()].clone();
+            let next = match key.code {
+                KeyCode::Left => Some((cur + ORDER.len() - 1) % ORDER.len()),
+                KeyCode::Right => Some((cur + 1) % ORDER.len()),
+                _ => None,
+            };
+            if let Some(next) = next {
+                self.screen = ORDER[next].clone();
                 if self.screen == Screen::Calendar {
                     self.open_calendar();
                 }
@@ -402,7 +381,7 @@ impl App {
         match self.typing_state {
             TypingState::Done => match key.code {
                 KeyCode::Char('n') => self.fetch_new_text(),
-                KeyCode::Char('r') | KeyCode::Enter | KeyCode::Char(' ') => self.restart(),
+                KeyCode::Char('r' | ' ') | KeyCode::Enter => self.restart(),
                 _ => {}
             },
             TypingState::Waiting | TypingState::Typing => {
@@ -418,7 +397,7 @@ impl App {
                 }
 
                 if let Some(start) = self.start_time {
-                    let offset_ms = start.elapsed().as_millis() as u64;
+                    let offset_ms = start.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
                     self.keystrokes.push(Keystroke {
                         typed: keycode_to_w3c(key.code),
                         offset_ms,
@@ -443,8 +422,7 @@ impl App {
                                 if ch != expected {
                                     self.errors += 1;
                                 }
-                                self.last_pressed_key = Some(ch);
-                                self.last_pressed_correct = ch == expected;
+                                self.last_pressed = Some((ch, ch == expected));
                             }
                             TypingMode::Stop => {
                                 if ch == expected {
@@ -454,15 +432,13 @@ impl App {
                                     self.errors += 1;
                                     self.error_flash = true;
                                 }
-                                self.last_pressed_key = Some(ch);
-                                self.last_pressed_correct = ch == expected;
+                                self.last_pressed = Some((ch, ch == expected));
                             }
                             TypingMode::SuddenDeath => {
                                 if ch == expected {
                                     self.typed.push(ch);
                                     self.cursor += 1;
-                                    self.last_pressed_key = Some(ch);
-                                    self.last_pressed_correct = true;
+                                    self.last_pressed = Some((ch, true));
                                 } else {
                                     // Act as if backspaced to the beginning:
                                     // clear typed text and cursor but keep
@@ -471,8 +447,7 @@ impl App {
                                     self.cursor = 0;
                                     self.errors += 1;
                                     self.error_flash = true;
-                                    self.last_pressed_key = Some(ch);
-                                    self.last_pressed_correct = false;
+                                    self.last_pressed = Some((ch, false));
                                     return;
                                 }
                             }
@@ -487,7 +462,7 @@ impl App {
                         if at_end && (self.config.mode != TypingMode::Correct || all_correct) {
                             let elapsed = self.start_time.unwrap().elapsed();
                             let minutes = elapsed.as_secs_f64() / 60.0;
-                            let words = self.target.len() as f64 / 5.0;
+                            let words = usize_to_f64(self.target.len()) / 5.0;
                             self.wpm = words / minutes;
                             self.typing_state = TypingState::Done;
 
@@ -570,7 +545,7 @@ impl App {
             .zip(self.target.iter())
             .filter(|(t, r)| t == r)
             .count();
-        correct as f64 / total_keys as f64 * 100.0
+        usize_to_f64(correct) / usize_to_f64(total_keys) * 100.0
     }
 }
 
@@ -583,22 +558,9 @@ pub fn fetch_text(source: TextSource, length: TextLength) -> String {
     }
 }
 
-pub fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
-    if app.fetching {
-        let msg = Line::from(Span::styled(
-            "  Fetching text from Wikipedia…",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        frame.render_widget(Paragraph::new(vec![Line::from(""), msg]), area);
-        return;
-    }
-
-    let blind = app.config.mode == TypingMode::Blind;
-    let max_w = (area.width as usize).saturating_sub(4).max(20);
+/// Split `text` into display lines of at most `max_w` chars, breaking after spaces.
+fn wrap_ranges(text: &[char], max_w: usize) -> Vec<(usize, usize)> {
     let mut lines_ranges: Vec<(usize, usize)> = Vec::new();
-    let text = &app.target;
     let mut pos = 0;
     while pos < text.len() {
         let remaining = text.len() - pos;
@@ -616,6 +578,93 @@ pub fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         lines_ranges.push((pos, end));
         pos = end;
     }
+    lines_ranges
+}
+
+/// Styled span for the target character at index `i`.
+fn char_span(app: &App, i: usize, ch: char, blind: bool) -> Span<'static> {
+    match i.cmp(&app.cursor) {
+        std::cmp::Ordering::Less => {
+            if blind {
+                Span::styled("·", Style::default().fg(Color::DarkGray))
+            } else if app.typed[i] == ch {
+                Span::styled(ch.to_string(), Style::default().fg(Color::Green))
+            } else {
+                Span::styled(
+                    ch.to_string(),
+                    Style::default()
+                        .fg(Color::Red)
+                        .add_modifier(Modifier::UNDERLINED),
+                )
+            }
+        }
+        std::cmp::Ordering::Equal => {
+            let bg = if app.error_flash {
+                Color::Red
+            } else {
+                Color::White
+            };
+            Span::styled(
+                ch.to_string(),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            )
+        }
+        std::cmp::Ordering::Greater => {
+            Span::styled(ch.to_string(), Style::default().fg(Color::DarkGray))
+        }
+    }
+}
+
+/// Live WPM / accuracy / errors / time line shown while typing.
+fn live_stats_text(app: &App) -> String {
+    let live_wpm = if let Some(start) = app.start_time {
+        let mins = start.elapsed().as_secs_f64() / 60.0;
+        if mins > 0.0 {
+            f64_to_u32(usize_to_f64(app.cursor) / 5.0 / mins)
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    let total_keys = app.cursor + app.errors;
+    let accuracy = if total_keys > 0 {
+        f64_to_u32(
+            usize_to_f64(app.cursor.saturating_sub(app.errors)) / usize_to_f64(total_keys) * 100.0,
+        )
+    } else {
+        100
+    };
+    let elapsed = app.start_time.map_or(0, |s| s.elapsed().as_secs());
+    format!(
+        "WPM: {}   accuracy: {}%   errors: {}   time: {}:{:02}",
+        live_wpm,
+        accuracy,
+        app.errors,
+        elapsed / 60,
+        elapsed % 60
+    )
+}
+
+pub fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    if app.fetching {
+        let msg = Line::from(Span::styled(
+            "  Fetching text from Wikipedia…",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        frame.render_widget(Paragraph::new(vec![Line::from(""), msg]), area);
+        return;
+    }
+
+    let blind = app.config.mode == TypingMode::Blind;
+    let max_w = usize::from(area.width).saturating_sub(4).max(20);
+    let text = &app.target;
+    let lines_ranges = wrap_ranges(text, max_w);
 
     let cursor_line = lines_ranges
         .iter()
@@ -624,7 +673,7 @@ pub fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 
     let keyboard_h = 5u16;
     let reserved = 5u16 + keyboard_h + 1;
-    let viewport_h = area.height.saturating_sub(reserved) as usize;
+    let viewport_h = usize::from(area.height.saturating_sub(reserved));
     let viewport_h = viewport_h.max(1);
 
     let scroll_top = cursor_line.saturating_sub(viewport_h / 2);
@@ -637,38 +686,10 @@ pub fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     {
         let mut spans: Vec<Span> = Vec::new();
         for (i, &ch) in text.iter().enumerate().take(end).skip(start) {
-            let span = if i < app.cursor {
-                if blind {
-                    Span::styled("·", Style::default().fg(Color::DarkGray))
-                } else if app.typed[i] == ch {
-                    Span::styled(ch.to_string(), Style::default().fg(Color::Green))
-                } else {
-                    Span::styled(
-                        ch.to_string(),
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::UNDERLINED),
-                    )
-                }
-            } else if i == app.cursor {
-                let bg = if app.error_flash {
-                    Color::Red
-                } else {
-                    Color::White
-                };
-                Span::styled(
-                    ch.to_string(),
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(bg)
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else {
-                Span::styled(ch.to_string(), Style::default().fg(Color::DarkGray))
-            };
+            let span = char_span(app, i, ch, blind);
             spans.push(span);
         }
-        let render_row = view_y + (row - scroll_top) as u16;
+        let render_row = view_y + u16::try_from(row - scroll_top).unwrap_or(u16::MAX);
         if render_row < area.bottom().saturating_sub(reserved) {
             let line_rect = Rect::new(area.x, render_row, area.width, 1);
             frame.render_widget(Paragraph::new(Line::from(spans)), line_rect);
@@ -678,10 +699,10 @@ pub fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let progress_pct = if app.target.is_empty() {
         0.0
     } else {
-        app.cursor as f64 / app.target.len() as f64
+        usize_to_f64(app.cursor) / usize_to_f64(app.target.len())
     };
-    let bar_w = area.width as usize;
-    let filled = (bar_w as f64 * progress_pct) as usize;
+    let bar_w = usize::from(area.width);
+    let filled = f64_to_usize(usize_to_f64(bar_w) * progress_pct);
     let empty = bar_w.saturating_sub(filled);
     let bar_text = format!(
         "[{}{}] {:.0}%",
@@ -697,31 +718,7 @@ pub fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     );
 
     if app.typing_state == TypingState::Typing {
-        let live_wpm = if let Some(start) = app.start_time {
-            let mins = start.elapsed().as_secs_f64() / 60.0;
-            if mins > 0.0 {
-                (app.cursor as f64 / 5.0 / mins) as u32
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-        let total_keys = app.cursor + app.errors;
-        let accuracy = if total_keys > 0 {
-            (app.cursor.saturating_sub(app.errors) as f64 / total_keys as f64 * 100.0) as u32
-        } else {
-            100
-        };
-        let elapsed = app.start_time.map(|s| s.elapsed().as_secs()).unwrap_or(0);
-        let stats_text = format!(
-            "WPM: {}   accuracy: {}%   errors: {}   time: {}:{:02}",
-            live_wpm,
-            accuracy,
-            app.errors,
-            elapsed / 60,
-            elapsed % 60
-        );
+        let stats_text = live_stats_text(app);
         let stats_rect = Rect::new(area.x, bar_y + 2, area.width, 1);
         if stats_rect.bottom() <= area.bottom() {
             frame.render_widget(
@@ -784,6 +781,38 @@ pub fn base_key(c: char) -> char {
     }
 }
 
+/// Style of one keyboard cell given the pressed and expected keys.
+fn key_cell_style(pressed: Option<char>, expected: Option<char>, k: char, correct: bool) -> Style {
+    let base = Style::default()
+        .fg(Color::Black)
+        .add_modifier(Modifier::BOLD);
+    if pressed == Some(k) {
+        if correct {
+            base.bg(Color::Green)
+        } else {
+            base.bg(Color::Red)
+        }
+    } else if expected == Some(k) {
+        base.bg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    }
+}
+
+/// Style of the L/R hand label: highlighted when the last pressed key used that hand.
+fn hand_label_style(app: &App, hand: Hand) -> Style {
+    if app
+        .last_pressed
+        .is_some_and(|(c, _)| hand_for_char(c) == Some(hand))
+    {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    }
+}
+
 pub fn render_keyboard(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     const ROWS: &[&[char]] = &[
         &[
@@ -803,49 +832,28 @@ pub fn render_keyboard(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     } else {
         None
     };
-    let pressed_base = app.last_pressed_key.map(base_key);
+    let pressed_base = app.last_pressed.map(|(c, _)| base_key(c));
 
-    let dim_style = Style::default().fg(Color::DarkGray);
-    let expect_style = Style::default()
-        .fg(Color::Black)
-        .bg(Color::Cyan)
-        .add_modifier(Modifier::BOLD);
-    let correct_style = Style::default()
-        .fg(Color::Black)
-        .bg(Color::Green)
-        .add_modifier(Modifier::BOLD);
-    let wrong_style = Style::default()
-        .fg(Color::Black)
-        .bg(Color::Red)
-        .add_modifier(Modifier::BOLD);
+    let correct = app.last_pressed.is_some_and(|(_, ok)| ok);
 
     for (row_idx, keys) in ROWS.iter().enumerate() {
-        if row_idx as u16 >= area.height {
+        let row_u16 = u16::try_from(row_idx).unwrap_or(u16::MAX);
+        if row_u16 >= area.height {
             break;
         }
-        let y = area.y + row_idx as u16;
+        let y = area.y + row_u16;
         let offset = OFFSETS[row_idx];
         let mut spans: Vec<Span> = Vec::new();
         if offset > 0 {
-            spans.push(Span::raw(" ".repeat(offset as usize)));
+            spans.push(Span::raw(" ".repeat(usize::from(offset))));
         }
         for &k in *keys {
             let display = if k == '\\' {
                 "\\ ".to_string()
             } else {
-                format!(" {} ", k)
+                format!(" {k} ")
             };
-            let style = if pressed_base == Some(k) {
-                if app.last_pressed_correct {
-                    correct_style
-                } else {
-                    wrong_style
-                }
-            } else if expected_base == Some(k) {
-                expect_style
-            } else {
-                dim_style
-            };
+            let style = key_cell_style(pressed_base, expected_base, k, correct);
             spans.push(Span::styled(display, style));
         }
         frame.render_widget(
@@ -856,44 +864,14 @@ pub fn render_keyboard(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 
     if 4 < area.height {
         let y = area.y + 4;
-        let style = if pressed_base == Some(' ') {
-            if app.last_pressed_correct {
-                correct_style
-            } else {
-                wrong_style
-            }
-        } else if expected_base == Some(' ') {
-            expect_style
-        } else {
-            dim_style
-        };
+        let style = key_cell_style(pressed_base, expected_base, ' ', correct);
         let mut spans = vec![
-            Span::raw(" ".repeat(OFFSETS[3] as usize + CELL_W as usize * 2)),
+            Span::raw(" ".repeat(usize::from(OFFSETS[3]) + usize::from(CELL_W) * 2)),
             Span::styled("   space   ", style),
             Span::raw("  "),
         ];
-        let left_label_style = if app
-            .last_pressed_key
-            .map(|c| hand_for_char(c) == Some(Hand::Left))
-            .unwrap_or(false)
-        {
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        let right_label_style = if app
-            .last_pressed_key
-            .map(|c| hand_for_char(c) == Some(Hand::Right))
-            .unwrap_or(false)
-        {
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
+        let left_label_style = hand_label_style(app, Hand::Left);
+        let right_label_style = hand_label_style(app, Hand::Right);
         spans.push(Span::styled("L", left_label_style));
         spans.push(Span::raw(" "));
         spans.push(Span::styled("R", right_label_style));
@@ -902,6 +880,105 @@ pub fn render_keyboard(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             Rect::new(area.x, y, area.width, 1),
         );
     }
+}
+
+/// Left/right hand comparison table shown on the results screen.
+fn hand_report_lines(left_stats: &HandStats, right_stats: &HandStats) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "── Hand Report ──",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<14}", ""), Style::default()),
+        Span::styled(
+            format!("{:>10}", "Left"),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{:>10}", "Right"),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    let left_resp = if left_stats.total_keys > 1 {
+        format!("{:.0} ms", left_stats.avg_response_ms)
+    } else {
+        "—".to_string()
+    };
+    let right_resp = if right_stats.total_keys > 1 {
+        format!("{:.0} ms", right_stats.avg_response_ms)
+    } else {
+        "—".to_string()
+    };
+    lines.push(Line::from(vec![
+        Span::raw(format!("{:<14}", "Avg response")),
+        Span::styled(
+            format!("{left_resp:>10}"),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(
+            format!("{right_resp:>10}"),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw(format!("{:<14}", "Keys typed")),
+        Span::styled(
+            format!("{:>10}", left_stats.total_keys),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(
+            format!("{:>10}", right_stats.total_keys),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw(format!("{:<14}", "Errors")),
+        Span::styled(
+            format!("{:>10}", left_stats.errors),
+            Style::default().fg(if left_stats.errors == 0 {
+                Color::Green
+            } else {
+                Color::Red
+            }),
+        ),
+        Span::styled(
+            format!("{:>10}", right_stats.errors),
+            Style::default().fg(if right_stats.errors == 0 {
+                Color::Green
+            } else {
+                Color::Red
+            }),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw(format!("{:<14}", "Error rate")),
+        Span::styled(
+            format!("{:>9.1}%", left_stats.error_rate()),
+            Style::default().fg(if left_stats.error_rate() < 5.0 {
+                Color::Green
+            } else {
+                Color::Red
+            }),
+        ),
+        Span::styled(
+            format!("{:>9.1}%", right_stats.error_rate()),
+            Style::default().fg(if right_stats.error_rate() < 5.0 {
+                Color::Green
+            } else {
+                Color::Red
+            }),
+        ),
+    ]));
+    lines
 }
 
 pub fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
@@ -935,7 +1012,7 @@ pub fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         Line::from(vec![
             Span::raw("Accuracy: "),
             Span::styled(
-                format!("{:.1}%", accuracy),
+                format!("{accuracy:.1}%"),
                 Style::default().fg(acc_color).add_modifier(Modifier::BOLD),
             ),
         ]),
@@ -955,99 +1032,7 @@ pub fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     ];
 
     if left_stats.total_keys > 0 || right_stats.total_keys > 0 {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "── Hand Report ──",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled(format!("{:<14}", ""), Style::default()),
-            Span::styled(
-                format!("{:>10}", "Left"),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("{:>10}", "Right"),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
-        let left_resp = if left_stats.total_keys > 1 {
-            format!("{:.0} ms", left_stats.avg_response_ms)
-        } else {
-            "—".to_string()
-        };
-        let right_resp = if right_stats.total_keys > 1 {
-            format!("{:.0} ms", right_stats.avg_response_ms)
-        } else {
-            "—".to_string()
-        };
-        lines.push(Line::from(vec![
-            Span::raw(format!("{:<14}", "Avg response")),
-            Span::styled(
-                format!("{:>10}", left_resp),
-                Style::default().fg(Color::White),
-            ),
-            Span::styled(
-                format!("{:>10}", right_resp),
-                Style::default().fg(Color::White),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::raw(format!("{:<14}", "Keys typed")),
-            Span::styled(
-                format!("{:>10}", left_stats.total_keys),
-                Style::default().fg(Color::White),
-            ),
-            Span::styled(
-                format!("{:>10}", right_stats.total_keys),
-                Style::default().fg(Color::White),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::raw(format!("{:<14}", "Errors")),
-            Span::styled(
-                format!("{:>10}", left_stats.errors),
-                Style::default().fg(if left_stats.errors == 0 {
-                    Color::Green
-                } else {
-                    Color::Red
-                }),
-            ),
-            Span::styled(
-                format!("{:>10}", right_stats.errors),
-                Style::default().fg(if right_stats.errors == 0 {
-                    Color::Green
-                } else {
-                    Color::Red
-                }),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::raw(format!("{:<14}", "Error rate")),
-            Span::styled(
-                format!("{:>9.1}%", left_stats.error_rate()),
-                Style::default().fg(if left_stats.error_rate() < 5.0 {
-                    Color::Green
-                } else {
-                    Color::Red
-                }),
-            ),
-            Span::styled(
-                format!("{:>9.1}%", right_stats.error_rate()),
-                Style::default().fg(if right_stats.error_rate() < 5.0 {
-                    Color::Green
-                } else {
-                    Color::Red
-                }),
-            ),
-        ]));
+        lines.extend(hand_report_lines(&left_stats, &right_stats));
     }
 
     lines.push(Line::from(""));
@@ -1056,7 +1041,7 @@ pub fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         Style::default().fg(Color::DarkGray),
     )));
 
-    let result_rect = centered_rect(52, lines.len() as u16, area);
+    let result_rect = centered_rect(52, u16::try_from(lines.len()).unwrap_or(u16::MAX), area);
     frame.render_widget(
         Paragraph::new(lines).alignment(Alignment::Center),
         result_rect,
@@ -1066,6 +1051,7 @@ pub fn render_done(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::{days_in_month_cal, days_to_ymd, first_weekday_of_month, is_leap_year};
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1180,7 +1166,7 @@ mod tests {
             TypingMode::SuddenDeath,
             TypingMode::Blind,
         ] {
-            assert!(!m.description().is_empty());
+            assert_ne!(m.description(), "");
         }
     }
 

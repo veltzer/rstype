@@ -56,10 +56,49 @@ pub fn now_timestamp() -> String {
     let s = secs % 60;
     let m = (secs / 60) % 60;
     let h = (secs / 3600) % 24;
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        year, month, day, h, m, s
+    format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{s:02}Z")
+}
+
+/// Lossless-as-possible `u64` to `f64` conversion.
+pub fn u64_to_f64(n: u64) -> f64 {
+    let hi = u32::try_from(n >> 32).unwrap_or(u32::MAX);
+    let lo = u32::try_from(n & 0xFFFF_FFFF).unwrap_or(0);
+    f64::from(hi) * 4_294_967_296.0 + f64::from(lo)
+}
+
+/// `usize` to `f64` conversion.
+pub fn usize_to_f64(n: usize) -> f64 {
+    u64_to_f64(u64::try_from(n).unwrap_or(u64::MAX))
+}
+
+/// Truncating, saturating `f64` to `usize` conversion (negative and NaN give 0).
+pub fn f64_to_usize(x: f64) -> usize {
+    format!("{:.0}", x.max(0.0).floor())
+        .parse()
+        .unwrap_or(usize::MAX)
+}
+
+/// Truncating, saturating `f64` to `u32` conversion (negative and NaN give 0).
+pub fn f64_to_u32(x: f64) -> u32 {
+    u32::try_from(f64_to_usize(x)).unwrap_or(u32::MAX)
+}
+
+/// Seed for the xorshift generators, taken from the clock.
+pub fn clock_seed() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
     )
+    .unwrap_or(u64::MAX)
+}
+
+/// Map a random value onto `0..len`.
+pub fn rng_index(r: u64, len: usize) -> usize {
+    let len = u64::try_from(len).unwrap_or(u64::MAX).max(1);
+    usize::try_from(r % len).unwrap_or(0)
 }
 
 pub fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
@@ -108,17 +147,13 @@ pub enum Hand {
 
 pub fn hand_for_char(c: char) -> Option<Hand> {
     match c.to_ascii_lowercase() {
-        '`' | '1' | '2' | '3' | '4' | '5' => Some(Hand::Left),
-        '~' | '!' | '@' | '#' | '$' | '%' => Some(Hand::Left),
-        'q' | 'w' | 'e' | 'r' | 't' => Some(Hand::Left),
-        'a' | 's' | 'd' | 'f' | 'g' => Some(Hand::Left),
-        'z' | 'x' | 'c' | 'v' | 'b' => Some(Hand::Left),
-        '6' | '7' | '8' | '9' | '0' | '-' | '=' => Some(Hand::Right),
-        '^' | '&' | '*' | '(' | ')' | '_' | '+' => Some(Hand::Right),
-        'y' | 'u' | 'i' | 'o' | 'p' | '[' | ']' | '\\' => Some(Hand::Right),
-        'h' | 'j' | 'k' | 'l' | ';' | '\'' => Some(Hand::Right),
-        'n' | 'm' | ',' | '.' | '/' => Some(Hand::Right),
-        '{' | '}' | '|' | ':' | '"' | '<' | '>' | '?' => Some(Hand::Right),
+        '`' | '1' | '2' | '3' | '4' | '5' | '~' | '!' | '@' | '#' | '$' | '%' | 'q' | 'w' | 'e'
+        | 'r' | 't' | 'a' | 's' | 'd' | 'f' | 'g' | 'z' | 'x' | 'c' | 'v' | 'b' => Some(Hand::Left),
+        '6' | '7' | '8' | '9' | '0' | '-' | '=' | '^' | '&' | '*' | '(' | ')' | '_' | '+' | 'y'
+        | 'u' | 'i' | 'o' | 'p' | '[' | ']' | '\\' | 'h' | 'j' | 'k' | 'l' | ';' | '\'' | 'n'
+        | 'm' | ',' | '.' | '/' | '{' | '}' | '|' | ':' | '"' | '<' | '>' | '?' => {
+            Some(Hand::Right)
+        }
         _ => None,
     }
 }
@@ -135,7 +170,7 @@ impl HandStats {
         if self.total_keys == 0 {
             0.0
         } else {
-            self.errors as f64 / self.total_keys as f64 * 100.0
+            usize_to_f64(self.errors) / usize_to_f64(self.total_keys) * 100.0
         }
     }
 }
@@ -168,9 +203,8 @@ pub fn compute_hand_stats(
     for i in 0..len {
         let expected = target[i];
         let actual = typed[i];
-        let hand = match hand_for_char(expected) {
-            Some(h) => h,
-            None => continue,
+        let Some(hand) = hand_for_char(expected) else {
+            continue;
         };
 
         let stats = match hand {
@@ -187,19 +221,19 @@ pub fn compute_hand_stats(
             stats.errors += 1;
         }
         if i > 0 {
-            *total_ms += char_times[i] as f64;
+            *total_ms += u64_to_f64(char_times[i]);
         }
     }
 
     let left_interval_count = left.total_keys.saturating_sub(1);
     let right_interval_count = right.total_keys.saturating_sub(1);
     left.avg_response_ms = if left_interval_count > 0 {
-        left_total_ms / left_interval_count as f64
+        left_total_ms / usize_to_f64(left_interval_count)
     } else {
         0.0
     };
     right.avg_response_ms = if right_interval_count > 0 {
-        right_total_ms / right_interval_count as f64
+        right_total_ms / usize_to_f64(right_interval_count)
     } else {
         0.0
     };
@@ -226,7 +260,7 @@ pub fn keycode_to_w3c(code: KeyCode) -> String {
         KeyCode::Left => "ArrowLeft".to_string(),
         KeyCode::Right => "ArrowRight".to_string(),
         KeyCode::CapsLock => "CapsLock".to_string(),
-        KeyCode::F(n) => format!("F{}", n),
+        KeyCode::F(n) => format!("F{n}"),
         _ => "Unidentified".to_string(),
     }
 }
@@ -237,7 +271,6 @@ pub fn is_leap_year(year: i32) -> bool {
 
 pub fn days_in_month_cal(year: i32, month: u32) -> u32 {
     match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
         2 => {
             if is_leap_year(year) {
@@ -253,8 +286,9 @@ pub fn days_in_month_cal(year: i32, month: u32) -> u32 {
 pub fn first_weekday_of_month(year: i32, month: u32) -> u32 {
     let t = [0u32, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
     let y = if month < 3 { year - 1 } else { year };
-    let yu = y as u32;
-    let dow = (yu + yu / 4 - yu / 100 + yu / 400 + t[(month - 1) as usize] + 1) % 7;
+    let yu = u32::try_from(y).unwrap_or(0);
+    let dow =
+        (yu + yu / 4 - yu / 100 + yu / 400 + t[usize::try_from(month - 1).unwrap_or(0)] + 1) % 7;
     (dow + 6) % 7
 }
 
@@ -284,7 +318,10 @@ pub fn today_ym() -> (i32, u32) {
         .as_secs();
     let days = secs / 86400;
     let (y, m, _) = days_to_ymd(days);
-    (y as i32, m as u32)
+    (
+        i32::try_from(y).unwrap_or(i32::MAX),
+        u32::try_from(m).unwrap_or(1),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, clap::ValueEnum)]
@@ -501,7 +538,7 @@ pub fn save_session(session: &Session) {
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path)
         && let Ok(line) = serde_json::to_string(session)
     {
-        let _ = writeln!(file, "{}", line);
+        let _ = writeln!(file, "{line}");
     }
 }
 
@@ -515,7 +552,7 @@ pub fn load_history_stats() -> HashMap<String, (usize, f64, usize, usize)> {
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(line)
             && let (Some(ts), Some(wpm)) = (
                 val.get("timestamp").and_then(|v| v.as_str()),
-                val.get("wpm").and_then(|v| v.as_f64()),
+                val.get("wpm").and_then(serde_json::Value::as_f64),
             )
         {
             let date_key = ts.get(..10).unwrap_or("").to_string();
@@ -532,7 +569,7 @@ pub fn load_history_stats() -> HashMap<String, (usize, f64, usize, usize)> {
         }
     }
     for v in map.values_mut() {
-        v.1 /= v.0 as f64;
+        v.1 /= usize_to_f64(v.0);
     }
     map
 }
@@ -545,7 +582,7 @@ pub fn load_all_wpms() -> Vec<f64> {
     content
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter_map(|val| val.get("wpm").and_then(|v| v.as_f64()))
+        .filter_map(|val| val.get("wpm").and_then(serde_json::Value::as_f64))
         .collect()
 }
 
@@ -590,23 +627,23 @@ pub fn load_history_hand_stats() -> (HandStats, HandStats) {
 
         if sl.total_keys > 1 {
             let count = sl.total_keys - 1;
-            left_total_ms += sl.avg_response_ms * count as f64;
+            left_total_ms += sl.avg_response_ms * usize_to_f64(count);
             left_interval_count += count;
         }
         if sr.total_keys > 1 {
             let count = sr.total_keys - 1;
-            right_total_ms += sr.avg_response_ms * count as f64;
+            right_total_ms += sr.avg_response_ms * usize_to_f64(count);
             right_interval_count += count;
         }
     }
 
     left.avg_response_ms = if left_interval_count > 0 {
-        left_total_ms / left_interval_count as f64
+        left_total_ms / usize_to_f64(left_interval_count)
     } else {
         0.0
     };
     right.avg_response_ms = if right_interval_count > 0 {
-        right_total_ms / right_interval_count as f64
+        right_total_ms / usize_to_f64(right_interval_count)
     } else {
         0.0
     };
