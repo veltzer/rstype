@@ -606,7 +606,7 @@ fn history_lines() -> Vec<Line<'static>> {
         let days_practiced = stats.len();
         for &(sessions, avg_wpm, words, chars) in stats.values() {
             total_sessions += sessions;
-            total_wpm_sum += avg_wpm * usize_to_f64(sessions);
+            total_wpm_sum = f64::mul_add(avg_wpm, usize_to_f64(sessions), total_wpm_sum);
             total_words += words;
             total_chars += chars;
         }

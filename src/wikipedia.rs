@@ -54,16 +54,10 @@ pub fn pick_collected_paragraph(length: TextLength) -> Option<String> {
             .filter(|p| p.len() >= min)
             .filter_map(|p| {
                 let trimmed: String = p.chars().take(max).collect();
-                if let Some(pos) = trimmed.rfind(['.', '?', '!']) {
+                trimmed.rfind(['.', '?', '!']).and_then(|pos| {
                     let snapped = trimmed[..=pos].trim().to_string();
-                    if snapped.len() >= min {
-                        Some(snapped)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+                    (snapped.len() >= min).then_some(snapped)
+                })
             })
             .collect();
         if trimmable.is_empty() {

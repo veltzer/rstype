@@ -1047,15 +1047,13 @@ pub fn generate_word_salad(length: TextLength) -> String {
     let mut result = String::new();
     while result.len() < max {
         let word = pick_word(rng());
-        if result.is_empty() {
-            result.push_str(word);
-        } else {
+        if !result.is_empty() {
             if result.len() + 1 + word.len() > max {
                 break;
             }
             result.push(' ');
-            result.push_str(word);
         }
+        result.push_str(word);
     }
     // If we didn't reach the minimum (unlikely), pad with short words
     while result.len() < min {

@@ -19,7 +19,7 @@ use crate::wikipedia::{
     WikiCollectMsg, fetch_wikipedia_paragraphs_batch, load_paragraphs, pick_collected_paragraph,
 };
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum TypingState {
     Waiting,
     Typing,
@@ -207,7 +207,7 @@ impl App {
 
     pub fn restart(&mut self) {
         let cfg = self.config.clone();
-        *self = App::new(cfg);
+        *self = Self::new(cfg);
     }
 
     /// Handle a Ctrl shortcut; returns true when the key was consumed.
@@ -482,7 +482,7 @@ impl App {
         }
     }
 
-    pub fn open_config(&mut self) {
+    pub const fn open_config(&mut self) {
         self.config_section = 0;
         self.config_cursor = match self.config.mode {
             TypingMode::Forward => 0,
@@ -512,7 +512,7 @@ impl App {
         self.screen = Screen::Calendar;
     }
 
-    pub fn on_key_calendar(&mut self, key: KeyEvent) {
+    pub const fn on_key_calendar(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char(',') => {
                 if self.calendar_month == 1 {
@@ -569,11 +569,10 @@ fn wrap_ranges(text: &[char], max_w: usize) -> Vec<(usize, usize)> {
             text.len()
         } else {
             let slice = &text[pos..pos + take];
-            if let Some(sp) = slice.iter().rposition(|&c| c == ' ') {
-                pos + sp + 1
-            } else {
-                pos + take
-            }
+            slice
+                .iter()
+                .rposition(|&c| c == ' ')
+                .map_or_else(|| pos + take, |sp| pos + sp + 1)
         };
         lines_ranges.push((pos, end));
         pos = end;
@@ -620,16 +619,14 @@ fn char_span(app: &App, i: usize, ch: char, blind: bool) -> Span<'static> {
 
 /// Live WPM / accuracy / errors / time line shown while typing.
 fn live_stats_text(app: &App) -> String {
-    let live_wpm = if let Some(start) = app.start_time {
+    let live_wpm = app.start_time.map_or(0, |start| {
         let mins = start.elapsed().as_secs_f64() / 60.0;
         if mins > 0.0 {
             f64_to_u32(usize_to_f64(app.cursor) / 5.0 / mins)
         } else {
             0
         }
-    } else {
-        0
-    };
+    });
     let total_keys = app.cursor + app.errors;
     let accuracy = if total_keys > 0 {
         f64_to_u32(
@@ -669,7 +666,7 @@ pub fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let cursor_line = lines_ranges
         .iter()
         .position(|&(s, e)| app.cursor >= s && app.cursor < e.max(s + 1))
-        .unwrap_or(lines_ranges.len().saturating_sub(1));
+        .unwrap_or_else(|| lines_ranges.len().saturating_sub(1));
 
     let keyboard_h = 5u16;
     let reserved = 5u16 + keyboard_h + 1;
@@ -754,7 +751,7 @@ pub fn render_typing(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     );
 }
 
-pub fn base_key(c: char) -> char {
+pub const fn base_key(c: char) -> char {
     match c {
         '~' => '`',
         '!' => '1',

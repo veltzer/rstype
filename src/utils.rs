@@ -63,7 +63,7 @@ pub fn now_timestamp() -> String {
 pub fn u64_to_f64(n: u64) -> f64 {
     let hi = u32::try_from(n >> 32).unwrap_or(u32::MAX);
     let lo = u32::try_from(n & 0xFFFF_FFFF).unwrap_or(0);
-    f64::from(hi) * 4_294_967_296.0 + f64::from(lo)
+    f64::mul_add(f64::from(hi), 4_294_967_296.0, f64::from(lo))
 }
 
 /// `usize` to `f64` conversion.
@@ -139,13 +139,13 @@ pub fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     (year, month, days + 1)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hand {
     Left,
     Right,
 }
 
-pub fn hand_for_char(c: char) -> Option<Hand> {
+pub const fn hand_for_char(c: char) -> Option<Hand> {
     match c.to_ascii_lowercase() {
         '`' | '1' | '2' | '3' | '4' | '5' | '~' | '!' | '@' | '#' | '$' | '%' | 'q' | 'w' | 'e'
         | 'r' | 't' | 'a' | 's' | 'd' | 'f' | 'g' | 'z' | 'x' | 'c' | 'v' | 'b' => Some(Hand::Left),
@@ -265,11 +265,11 @@ pub fn keycode_to_w3c(code: KeyCode) -> String {
     }
 }
 
-pub fn is_leap_year(year: i32) -> bool {
+pub const fn is_leap_year(year: i32) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
-pub fn days_in_month_cal(year: i32, month: u32) -> u32 {
+pub const fn days_in_month_cal(year: i32, month: u32) -> u32 {
     match month {
         4 | 6 | 9 | 11 => 30,
         2 => {
@@ -292,7 +292,7 @@ pub fn first_weekday_of_month(year: i32, month: u32) -> u32 {
     (dow + 6) % 7
 }
 
-pub fn month_name(month: u32) -> &'static str {
+pub const fn month_name(month: u32) -> &'static str {
     match month {
         1 => "January",
         2 => "February",
@@ -324,7 +324,7 @@ pub fn today_ym() -> (i32, u32) {
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum TypingMode {
     Forward,
@@ -335,38 +335,38 @@ pub enum TypingMode {
 }
 
 impl TypingMode {
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
-            TypingMode::Forward => "Forward",
-            TypingMode::Stop => "Stop",
-            TypingMode::Correct => "Correct",
-            TypingMode::SuddenDeath => "Sudden Death",
-            TypingMode::Blind => "Blind",
+            Self::Forward => "Forward",
+            Self::Stop => "Stop",
+            Self::Correct => "Correct",
+            Self::SuddenDeath => "Sudden Death",
+            Self::Blind => "Blind",
         }
     }
 
-    pub fn description(self) -> &'static str {
+    pub const fn description(self) -> &'static str {
         match self {
-            TypingMode::Forward => {
+            Self::Forward => {
                 "Wrong key advances the cursor. The mistake is marked in red.\nSpeed matters more than accuracy."
             }
-            TypingMode::Stop => {
+            Self::Stop => {
                 "Wrong key is blocked — cursor stays put until you press\nthe right key. No mistakes recorded."
             }
-            TypingMode::Correct => {
+            Self::Correct => {
                 "Wrong key advances but is marked in red. Backspace works.\nYou cannot finish until every character is correct."
             }
-            TypingMode::SuddenDeath => {
+            Self::SuddenDeath => {
                 "One wrong key sends you back to the start of the text.\nThe clock keeps running. Perfect accuracy required to finish."
             }
-            TypingMode::Blind => {
+            Self::Blind => {
                 "Typed characters are hidden as ·. No red/green feedback.\nTrust your muscle memory."
             }
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum TextSource {
     Wikipedia,
@@ -374,30 +374,30 @@ pub enum TextSource {
 }
 
 impl TextSource {
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
-            TextSource::Wikipedia => "Wikipedia",
-            TextSource::WordSalad => "Word Salad",
+            Self::Wikipedia => "Wikipedia",
+            Self::WordSalad => "Word Salad",
         }
     }
 
-    pub fn description(self) -> &'static str {
+    pub const fn description(self) -> &'static str {
         match self {
-            TextSource::Wikipedia => {
+            Self::Wikipedia => {
                 "Fetch a random Wikipedia article summary.\nRequires an internet connection."
             }
-            TextSource::WordSalad => {
+            Self::WordSalad => {
                 "Generate a random sequence of common English words.\nNo internet required."
             }
         }
     }
 }
 
-pub fn default_text_source() -> TextSource {
+pub const fn default_text_source() -> TextSource {
     TextSource::Wikipedia
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum TextLength {
     OneLine,
@@ -407,44 +407,44 @@ pub enum TextLength {
 }
 
 impl TextLength {
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
-            TextLength::OneLine => "One line",
-            TextLength::ShortParagraph => "Short paragraph",
-            TextLength::Paragraph => "Paragraph",
-            TextLength::LongParagraph => "Long paragraph",
+            Self::OneLine => "One line",
+            Self::ShortParagraph => "Short paragraph",
+            Self::Paragraph => "Paragraph",
+            Self::LongParagraph => "Long paragraph",
         }
     }
 
-    pub fn description(self) -> &'static str {
+    pub const fn description(self) -> &'static str {
         match self {
-            TextLength::OneLine => "Around 60 characters — a single sentence.",
-            TextLength::ShortParagraph => "Around 150 characters — two or three sentences.",
-            TextLength::Paragraph => "Around 300 characters — a full paragraph.",
-            TextLength::LongParagraph => "Around 600 characters — an extended passage.",
+            Self::OneLine => "Around 60 characters — a single sentence.",
+            Self::ShortParagraph => "Around 150 characters — two or three sentences.",
+            Self::Paragraph => "Around 300 characters — a full paragraph.",
+            Self::LongParagraph => "Around 600 characters — an extended passage.",
         }
     }
 
-    pub fn max_chars(self) -> usize {
+    pub const fn max_chars(self) -> usize {
         match self {
-            TextLength::OneLine => 70,
-            TextLength::ShortParagraph => 160,
-            TextLength::Paragraph => 320,
-            TextLength::LongParagraph => 640,
+            Self::OneLine => 70,
+            Self::ShortParagraph => 160,
+            Self::Paragraph => 320,
+            Self::LongParagraph => 640,
         }
     }
 
-    pub fn min_chars(self) -> usize {
+    pub const fn min_chars(self) -> usize {
         match self {
-            TextLength::OneLine => 30,
-            TextLength::ShortParagraph => 80,
-            TextLength::Paragraph => 160,
-            TextLength::LongParagraph => 320,
+            Self::OneLine => 30,
+            Self::ShortParagraph => 80,
+            Self::Paragraph => 160,
+            Self::LongParagraph => 320,
         }
     }
 }
 
-pub fn default_text_length() -> TextLength {
+pub const fn default_text_length() -> TextLength {
     TextLength::Paragraph
 }
 
@@ -461,10 +461,10 @@ pub struct Config {
     pub min_rows: u16,
 }
 
-pub fn default_min_cols() -> u16 {
+pub const fn default_min_cols() -> u16 {
     76
 }
-pub fn default_min_rows() -> u16 {
+pub const fn default_min_rows() -> u16 {
     32
 }
 
@@ -509,7 +509,7 @@ pub fn save_config(cfg: &Config) {
     }
 }
 
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub enum Screen {
     Typing,
     Config,
@@ -627,12 +627,12 @@ pub fn load_history_hand_stats() -> (HandStats, HandStats) {
 
         if sl.total_keys > 1 {
             let count = sl.total_keys - 1;
-            left_total_ms += sl.avg_response_ms * usize_to_f64(count);
+            left_total_ms = f64::mul_add(sl.avg_response_ms, usize_to_f64(count), left_total_ms);
             left_interval_count += count;
         }
         if sr.total_keys > 1 {
             let count = sr.total_keys - 1;
-            right_total_ms += sr.avg_response_ms * usize_to_f64(count);
+            right_total_ms = f64::mul_add(sr.avg_response_ms, usize_to_f64(count), right_total_ms);
             right_interval_count += count;
         }
     }
