@@ -1,3 +1,5 @@
+//! rstype: Rust based typing trainer.
+
 mod dict;
 mod train;
 mod ui;
