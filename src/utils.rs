@@ -593,8 +593,11 @@ pub fn reconstruct_typed(keystrokes: &[Keystroke]) -> Vec<char> {
             typed.pop();
         } else if ks.typed == "Space" {
             typed.push(' ');
-        } else if ks.typed.chars().count() == 1 {
-            typed.push(ks.typed.chars().next().unwrap());
+        } else {
+            let mut chars = ks.typed.chars();
+            if let (Some(only), None) = (chars.next(), chars.next()) {
+                typed.push(only);
+            }
         }
     }
     typed

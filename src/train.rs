@@ -459,8 +459,11 @@ impl App {
                             .zip(self.target.iter())
                             .all(|(a, b)| a == b);
                         let at_end = self.cursor == self.target.len();
-                        if at_end && (self.config.mode != TypingMode::Correct || all_correct) {
-                            let elapsed = self.start_time.unwrap().elapsed();
+                        if at_end
+                            && (self.config.mode != TypingMode::Correct || all_correct)
+                            && let Some(start) = self.start_time
+                        {
+                            let elapsed = start.elapsed();
                             let minutes = elapsed.as_secs_f64() / 60.0;
                             let words = usize_to_f64(self.target.len()) / 5.0;
                             self.wpm = words / minutes;
