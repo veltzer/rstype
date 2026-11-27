@@ -12,7 +12,7 @@ The Wikipedia source fetches random, high-quality paragraphs from a local
 collection. This provides varied, natural language practice on a wide range
 of topics.
 
-### Commands
+### Wikipedia Commands
 
 * **`rstype wikipedia download`**
   Downloads paragraphs from Wikipedia until your local collection reaches
@@ -41,7 +41,7 @@ Word salad mode generates practice text by picking random words from
 installed dictionaries. This is excellent for drilling common words and
 improving raw speed without the context of natural sentences.
 
-### Commands
+### Word Salad Commands
 
 * **`rstype dict list-remote`**
   Lists all language dictionaries available for installation from
