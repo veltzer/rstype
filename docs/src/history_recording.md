@@ -66,7 +66,7 @@ structures cleanly without quoting hacks or splitting into multiple files.
 ### Fields
 
 | Field | Type | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | `timestamp` | string | ISO 8601 UTC timestamp of when the session completed |
 | `text` | string | The target text that was trained on |
 | `mode` | string | Typing mode: `"forward"` or `"stop"` |
@@ -77,7 +77,7 @@ structures cleanly without quoting hacks or splitting into multiple files.
 ### Keystroke fields
 
 | Field | Type | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | `typed` | string | The key that was pressed, in W3C format (see below) |
 | `offset_ms` | number | Milliseconds since the first keypress of the session |
 
@@ -100,7 +100,7 @@ specification.
 Examples:
 
 | Key | Stored as |
-|-----|-----------|
+| ----- | ----------- |
 | Letter a | `"a"` |
 | Letter A (shifted) | `"A"` |
 | Space | `"` `"` (literal space character) |

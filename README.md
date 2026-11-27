@@ -73,7 +73,7 @@ rstype complete bash                 # Generate shell completions
 ## Typing Modes
 
 | Mode | Description |
-|------|-------------|
+| ------ | ------------- |
 | **Forward** | Cursor advances even on wrong key; errors shown in red |
 | **Stop** | Cursor stays on wrong key until the correct one is pressed |
 | **Correct** | Like Forward but must correct all errors before finishing |

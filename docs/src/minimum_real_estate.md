@@ -11,7 +11,7 @@ as `min_cols` and `min_rows`.
 ## Per-screen analysis
 
 | Screen | Min width | Min height | Notes |
-|--------|-----------|------------|-------|
+| -------- | ----------- | ------------ | ------- |
 | Toolbar | any | 1 | Always 1 row |
 | Status bar | any | 1 | Always 1 row |
 | Train | 47 | 5 | Text (43 chars) + box borders + blank lines |

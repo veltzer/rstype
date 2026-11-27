@@ -37,7 +37,7 @@ rstype by Mark Veltzer <mark.veltzer@gmail.com>
 ## Visual style
 
 | Property | Value |
-|----------|-------|
+| ---------- | ------- |
 | Background | `White` |
 | Foreground | `Black` |
 | Modifier | none |

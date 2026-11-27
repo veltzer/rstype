@@ -8,7 +8,7 @@ or experience they target.
 ## Current Modes (for reference)
 
 | Mode | Concept |
-|------|---------|
+| ------ | --------- |
 | **Forward** | Errors are shown but don't block progress |
 | **Stop** | Cursor blocks until you hit the correct key |
 | **Correct** | Errors advance but you must backspace and fix them before finishing |

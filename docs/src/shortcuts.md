@@ -3,7 +3,7 @@
 ## Global shortcuts (work on every screen)
 
 | Key | Action |
-|-----|--------|
+| ----- | -------- |
 | `Ctrl+C` | Exit the application (intercepted by app to cleanly restore terminal) |
 | `Ctrl+T` | Go to Train screen |
 | `Ctrl+G` | Go to Config screen |
@@ -16,7 +16,7 @@
 ## Train screen
 
 | Key | Action |
-|-----|--------|
+| ----- | -------- |
 | Any character key | Start session (on first keypress), type character |
 | `Backspace` | Delete last character (move cursor back) |
 | `Space` / `Enter` / `R` | Restart session (only when session is Done) |
@@ -26,7 +26,7 @@
 ## Config screen
 
 | Key | Action |
-|-----|--------|
+| ----- | -------- |
 | `↑` / `↓` | Move selection between modes |
 | `Enter` | Save selected mode and return to Train screen |
 
@@ -35,7 +35,7 @@
 ## History (calendar) screen
 
 | Key | Action |
-|-----|--------|
+| ----- | -------- |
 | `←` | Go to previous month |
 | `→` | Go to next month |
 
